@@ -1,0 +1,9 @@
+{
+  "name": "Goblin Moment",
+  "short_name": "Goblin",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f3f2ee",
+  "theme_color": "#f3f2ee",
+  "description": "ゴブリンに感情をぶつけて、その瞬間を残す。"
+}
