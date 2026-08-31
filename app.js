@@ -573,7 +573,7 @@ async function omniGenerateVideo(moment,apiKey,duration){
     response_format:{type:'video',delivery:'uri',aspect_ratio:'9:16',resolution:'720p'},
     generation_config:{video_config:{task}},
     background:false,
-    store:needsExtension,
+    store:true,
     stream:false,
   },apiKey);
   let blob=await resolveVideoOutput(payload,apiKey);
@@ -593,7 +593,7 @@ async function omniGenerateVideo(moment,apiKey,duration){
         response_format:{type:'video',delivery:'uri',aspect_ratio:'9:16',resolution:'720p'},
         generation_config:{video_config:{task:'extend'}},
         background:false,
-        store:!finalStep,
+        store:true,
         stream:false,
       },apiKey);
     }catch(e){
@@ -732,7 +732,7 @@ async function init(){
     els.draftIndicator.textContent='保存機能エラー';
     toast('保存領域を開けませんでした');
   }
-  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js?v=5').catch(()=>{});
+  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js?v=6').catch(()=>{});
   setTimeout(()=>{ if(!customElements.get('model-viewer'))els.modelWarning.hidden=false; },7000);
 }
 
