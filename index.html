@@ -18,36 +18,43 @@
       <section id="composer-page" class="page composer-page" aria-label="記録">
         <header class="topbar">
           <span id="draft-indicator" class="draft-indicator">保存準備中</span>
-          <button id="calendar-open" class="ghost-icon" type="button" aria-label="カレンダー">▦</button>
+          <div class="topbar-actions">
+            <button id="reset-draft" class="topbar-text-button" type="button">リセット</button>
+            <button id="calendar-open" class="ghost-icon" type="button" aria-label="カレンダー">▦</button>
+          </div>
         </header>
 
         <section id="emotion-stage" class="emotion-stage" aria-label="感情を表現する空間">
-          <div id="emoji-layer" class="emoji-layer" aria-label="スタンプの空間"></div>
           <div id="goblins" class="goblins" data-count="1"></div>
-
-          <div class="stage-tools">
-            <button id="emoji-picker-open" class="tool-pill" type="button" aria-label="スタンプを選ぶ">
-              <span id="selected-emoji">✨</span><small>スタンプ</small>
-            </button>
-          </div>
-          <p class="tap-guide">上半身をタップ＝＋　下半身をタップ＝−</p>
+          <div id="reaction-menu" class="reaction-menu" hidden aria-label="スタンプを選ぶ"></div>
+          <p class="tap-guide">上半身タップ＝＋　下半身タップ＝−　長押し＝スタンプ</p>
         </section>
 
         <section class="entry-area">
           <div class="photo-block">
             <div class="entry-label-row">
-              <strong>写真</strong>
+              <strong>写真・動画</strong>
               <label for="photo-input" class="text-button">追加</label>
             </div>
-            <input id="photo-input" type="file" accept="image/*" multiple hidden />
+            <input id="photo-input" type="file" accept="image/*,video/*" multiple hidden />
             <div id="photo-strip" class="photo-strip">
-              <label id="photo-empty" for="photo-input" class="photo-empty">＋ 写真を選ぶ</label>
+              <label id="photo-empty" for="photo-input" class="photo-empty">＋ 写真・動画を選ぶ</label>
             </div>
           </div>
 
           <div class="memo-block">
             <div class="entry-label-row"><strong>メモ</strong><span id="memo-count">0</span></div>
             <textarea id="memo" rows="4" maxlength="20000" placeholder="残したいことを書く"></textarea>
+          </div>
+
+          <div class="duration-block">
+            <div class="entry-label-row"><strong>生成する動画の長さ</strong><span id="duration-label">10秒</span></div>
+            <div id="duration-options" class="duration-options" role="group" aria-label="動画の長さ">
+              <button type="button" data-duration="5">5秒</button>
+              <button type="button" data-duration="10" class="selected">10秒</button>
+              <button type="button" data-duration="20">20秒</button>
+              <button type="button" data-duration="30">30秒</button>
+            </div>
           </div>
 
           <div class="primary-actions">
@@ -81,16 +88,6 @@
     </div>
   </div>
 
-  <div id="emoji-sheet" class="sheet" aria-hidden="true">
-    <button class="sheet-backdrop" data-close-sheet aria-label="閉じる"></button>
-    <section class="sheet-card" role="dialog" aria-modal="true" aria-label="スタンプを選ぶ">
-      <div class="sheet-handle"></div>
-      <header><strong>スタンプを選ぶ</strong><button id="emoji-close" class="text-button" type="button">完了</button></header>
-      <p class="sheet-help">スタンプを押すと、その場で空間に散らばります。空間を直接タップすると選択中のスタンプを置けます。</p>
-      <div id="emoji-categories" class="emoji-categories"></div>
-    </section>
-  </div>
-
   <div id="api-sheet" class="sheet" aria-hidden="true">
     <button class="sheet-backdrop" data-close-api aria-label="閉じる"></button>
     <section class="sheet-card api-card" role="dialog" aria-modal="true" aria-label="Gemini API キー設定">
@@ -108,10 +105,27 @@
   <div id="detail-modal" class="detail-modal" aria-hidden="true">
     <button class="detail-backdrop" data-close-detail aria-label="閉じる"></button>
     <article class="detail-card">
-      <header class="detail-header"><div><strong id="detail-date"></strong><span id="detail-time"></span></div><button id="detail-close" class="ghost-icon" type="button">×</button></header>
+      <header class="detail-header">
+        <div><strong id="detail-date"></strong><span id="detail-time"></span></div>
+        <div class="detail-header-actions">
+          <button id="detail-edit" class="topbar-text-button" type="button">編集</button>
+          <button id="detail-close" class="ghost-icon" type="button">×</button>
+        </div>
+      </header>
       <div id="detail-photos" class="detail-photos"></div>
       <p id="detail-note" class="detail-note"></p>
-      <div id="detail-stage" class="detail-stage"><div id="detail-emojis" class="detail-emojis"></div><div id="detail-goblins" class="detail-goblins"></div></div>
+      <div id="detail-stage" class="detail-stage"><div id="detail-goblins" class="detail-goblins"></div></div>
+
+      <div class="detail-duration-block">
+        <div class="entry-label-row"><strong>生成する動画の長さ</strong><span id="detail-duration-label">10秒</span></div>
+        <div id="detail-duration-options" class="duration-options" role="group" aria-label="動画の長さ">
+          <button type="button" data-duration="5">5秒</button>
+          <button type="button" data-duration="10" class="selected">10秒</button>
+          <button type="button" data-duration="20">20秒</button>
+          <button type="button" data-duration="30">30秒</button>
+        </div>
+      </div>
+
       <div class="detail-video-actions">
         <button id="detail-generate-video" class="generate-button" type="button">動画生成</button>
         <button id="detail-view-video" class="secondary-button" type="button" hidden>生成済み動画を見る</button>
@@ -124,7 +138,7 @@
     <button class="detail-backdrop" data-close-video aria-label="閉じる"></button>
     <article class="video-card">
       <header class="detail-header"><div><strong>生成された動画</strong><span id="video-model-label">Gemini Omni Flash</span></div><button id="video-close" class="ghost-icon" type="button">×</button></header>
-      <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span>入力した写真・メモ・感情・スタンプをまとめています。</span></div>
+      <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span id="video-loading-copy">入力した写真・動画・メモ・感情・スタンプをまとめています。</span></div>
       <video id="video-player" controls playsinline loop hidden></video>
     </article>
   </div>

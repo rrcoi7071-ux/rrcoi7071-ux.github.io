@@ -1,4 +1,4 @@
-const CACHE = 'goblin-moment-v3';
+const CACHE = 'goblin-moment-v4';
 const SHELL = ['./','./index.html','./styles.css','./app.js','./manifest.webmanifest'];
 const MODEL_PATH = '/models/';
 
