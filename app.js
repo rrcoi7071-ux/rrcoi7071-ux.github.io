@@ -539,8 +539,18 @@ function base64ToBlob(base64,mime='video/mp4'){
 }
 function fileIdFromUri(uri=''){ const m=uri.match(/files\/([^/:?]+)/); return m?.[1]||null; }
 async function createOmniInteraction(body,apiKey){
-  const endpoint=`https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(apiKey)}`;
-  const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const endpoint='https://generativelanguage.googleapis.com/v1beta/interactions';
+  // Video responses require a stored interaction. Force it here so no caller can accidentally disable it.
+  const requestBody={...body,store:true};
+  const response=await fetch(endpoint,{
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-goog-api-key':apiKey,
+      'Api-Revision':'2026-05-20',
+    },
+    body:JSON.stringify(requestBody),
+  });
   const raw=await response.text(); let payload={}; try{payload=raw?JSON.parse(raw):{};}catch{}
   if(!response.ok)throw new Error(payload?.error?.message||`Gemini API ${response.status}`);
   return payload;
@@ -732,7 +742,7 @@ async function init(){
     els.draftIndicator.textContent='保存機能エラー';
     toast('保存領域を開けませんでした');
   }
-  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js?v=6').catch(()=>{});
+  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js?v=7').catch(()=>{});
   setTimeout(()=>{ if(!customElements.get('model-viewer'))els.modelWarning.hidden=false; },7000);
 }
 
