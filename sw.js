@@ -1,5 +1,5 @@
-const CACHE = 'goblin-moment-v4';
-const SHELL = ['./','./index.html','./styles.css','./app.js','./manifest.webmanifest'];
+const CACHE = 'goblin-moment-v5';
+const SHELL = ['./','./index.html','./styles.css?v=5','./app.js?v=5','./manifest.webmanifest'];
 const MODEL_PATH = '/models/';
 
 self.addEventListener('install', event => {

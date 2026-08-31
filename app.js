@@ -652,9 +652,28 @@ async function startGeneration(job){
 }
 
 function setupSwipe(){
-  const start=e=>{ const t=e.changedTouches?.[0]; if(!t)return; if(e.target.closest('textarea,button,label,input,.sheet,.detail-modal,.video-modal,.reaction-menu'))return; touchStart={x:t.clientX,y:t.clientY}; };
-  const end=e=>{ if(!touchStart)return; const t=e.changedTouches?.[0]; if(!t)return; const dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y; touchStart=null; if(Math.abs(dx)<70||Math.abs(dx)<Math.abs(dy)*1.35)return; if(dx<0&&!els.pages.classList.contains('show-calendar'))showCalendar(); else if(dx>0&&els.pages.classList.contains('show-calendar'))showComposer(); };
-  document.addEventListener('touchstart',start,{passive:true}); document.addEventListener('touchend',end,{passive:true});
+  const isBlockedTarget=target=>{
+    // Goblin hit areas are buttons, but swiping across the goblin must still navigate.
+    if(target.closest('.goblin-hit,.goblin-card,.emotion-stage')) return false;
+    return !!target.closest('textarea,button,label,input,.sheet,.detail-modal,.video-modal,.reaction-menu');
+  };
+  const start=e=>{
+    const t=e.changedTouches?.[0];
+    if(!t||isBlockedTarget(e.target))return;
+    touchStart={x:t.clientX,y:t.clientY};
+  };
+  const end=e=>{
+    if(!touchStart)return;
+    const t=e.changedTouches?.[0];
+    if(!t)return;
+    const dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y;
+    touchStart=null;
+    if(Math.abs(dx)<55||Math.abs(dx)<Math.abs(dy)*1.15)return;
+    if(dx<0&&!els.pages.classList.contains('show-calendar'))showCalendar();
+    else if(dx>0&&els.pages.classList.contains('show-calendar'))showComposer();
+  };
+  document.addEventListener('touchstart',start,{passive:true});
+  document.addEventListener('touchend',end,{passive:true});
 }
 async function requestPersistence(){ try{ if(navigator.storage?.persist){ const already=await navigator.storage.persisted(); if(!already)await navigator.storage.persist(); } }catch(e){ console.warn('persistent storage request failed',e); } }
 async function restoreDraft(){
@@ -703,11 +722,17 @@ function bind(){
 
 async function init(){
   bind();
+  // Show the core interaction immediately, even if storage restoration has a problem.
+  renderGoblin();
   try{
     db=await openDB(); await requestPersistence(); await restoreDraft(); await renderCalendar(); await renderSelectedDate();
     idlePrefetchModels();
-  }catch(e){ console.error(e); els.draftIndicator.textContent='保存機能エラー'; toast('保存領域を開けませんでした'); }
-  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  }catch(e){
+    console.error(e);
+    els.draftIndicator.textContent='保存機能エラー';
+    toast('保存領域を開けませんでした');
+  }
+  if('serviceWorker'in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('./sw.js?v=5').catch(()=>{});
   setTimeout(()=>{ if(!customElements.get('model-viewer'))els.modelWarning.hidden=false; },7000);
 }
 
