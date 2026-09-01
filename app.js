@@ -1,7 +1,14 @@
 const ALLOWED_DURATIONS = [5, 10, 20, 30];
+const LIFE_STAGES = [
+  { id: 'kindergarten', label: '幼稚園', prompt: '幼稚園の頃' },
+  { id: 'elementary', label: '小学校', prompt: '小学生の頃' },
+  { id: 'middle', label: '中学校', prompt: '中学生の頃' },
+  { id: 'high', label: '高校', prompt: '高校生の頃' },
+  { id: 'university', label: '大学', prompt: '大学生の頃' },
+];
 const DB_NAME = 'goblin-moment-db';
 const DB_VERSION = 2;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 const OMNI_MODEL = 'gemini-omni-1.1-flash';
 const OPENAI_MODEL = 'gpt-5.6-luna';
 const OPENAI_KEY_STORAGE = 'goblin-moment-openai-api-key';
@@ -12,8 +19,6 @@ const els = {};
 let db;
 let state = freshDraft();
 let draftTimer = null;
-let currentMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-let selectedDate = localDate(new Date());
 let detailRecordId = null;
 let detailDuration = 10;
 let detailStoryMode = 'polished';
@@ -24,14 +29,19 @@ let pendingAction = null;
 let activeVideoUrl = null;
 let mediaObjectUrls = [];
 let detailObjectUrls = [];
+let lifeObjectUrls = [];
 let swipeStart = null;
 
 function $(id) { return document.getElementById(id); }
 function normalizeDuration(value) { const n = Number(value); return ALLOWED_DURATIONS.includes(n) ? n : 10; }
+function stageById(id) { return LIFE_STAGES.find(stage => stage.id === id) || null; }
+function stageLabel(id) { return stageById(id)?.label || 'これまでの記録'; }
+function stagePrompt(id) { return stageById(id)?.prompt || '人生のある時期'; }
 function freshDraft() {
   return {
     key: 'active',
     schemaVersion: SCHEMA_VERSION,
+    lifeStage: 'university',
     rawNote: '',
     polishedNote: '',
     mediaIds: [],
@@ -48,6 +58,7 @@ function normalizeDraft(saved) {
     ...base,
     ...saved,
     schemaVersion: SCHEMA_VERSION,
+    lifeStage: saved.lifeStage || saved.stage || base.lifeStage,
     rawNote: saved.rawNote ?? saved.note ?? '',
     polishedNote: saved.polishedNote ?? '',
     mediaIds: Array.isArray(saved.mediaIds) ? saved.mediaIds : [],
@@ -61,6 +72,7 @@ function normalizeRecord(record) {
   return {
     ...record,
     schemaVersion: Math.max(Number(record.schemaVersion) || 0, SCHEMA_VERSION),
+    lifeStage: record.lifeStage || record.stage || 'unclassified',
     rawNote: record.rawNote ?? record.note ?? '',
     polishedNote: record.polishedNote ?? record.note ?? '',
     mediaIds: Array.isArray(record.mediaIds) ? record.mediaIds : [],
@@ -74,9 +86,11 @@ function localDate(d) {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
-function formatTime(iso) { return new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit' }).format(new Date(iso)); }
-function formatLongDate(dateStr) { const [y, m, d] = dateStr.split('-').map(Number); return `${y}年${m}月${d}日`; }
-function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
+function formatSavedAt(iso) {
+  if (!iso) return '';
+  return new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+}
+function escapeHtml(value = '') { return String(value).replace(/[&<>\'\"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function toast(message, ms = 2800) {
   els.toast.textContent = message;
@@ -118,7 +132,6 @@ async function deleteVideo(id) { if (id) await idbReq(db.transaction('videos', '
 async function getAllRecords() { return (await idbReq(db.transaction('moments', 'readonly').objectStore('moments').getAll())).map(normalizeRecord); }
 async function getRecord(id) { return normalizeRecord(await idbReq(db.transaction('moments', 'readonly').objectStore('moments').get(id))); }
 async function putRecord(record) { return idbReq(db.transaction('moments', 'readwrite').objectStore('moments').put(record)); }
-async function getRecordsByDate(date) { return (await idbReq(db.transaction('moments', 'readonly').objectStore('moments').index('localDate').getAll(date))).map(normalizeRecord); }
 
 function queueDraft() {
   els.draftIndicator.textContent = editingRecordId ? '編集中・保存中…' : '下書きを保存中…';
@@ -136,6 +149,13 @@ function queueDraft() {
 }
 
 function revokeUrls(list) { for (const url of list) URL.revokeObjectURL(url); list.length = 0; }
+function setLifeStage(stageId, save = true) {
+  if (!stageById(stageId)) return;
+  state.lifeStage = stageId;
+  els.stageLabel.textContent = stageLabel(stageId);
+  els.stageOptions.querySelectorAll('[data-stage]').forEach(button => button.classList.toggle('selected', button.dataset.stage === stageId));
+  if (save) queueDraft();
+}
 async function renderMedia() {
   revokeUrls(mediaObjectUrls);
   els.mediaStrip.querySelectorAll('.media-thumb').forEach(node => node.remove());
@@ -219,7 +239,8 @@ async function resetComposer(ask = true) {
   }
   editingRecordId = null; editOriginalRecord = null; state = freshDraft();
   await deleteDraftRecord().catch(() => {}); await putDraft();
-  els.note.value = ''; els.noteCount.textContent = '0'; setComposerDuration(10, false);
+  els.note.value = ''; els.noteCount.textContent = '0';
+  setLifeStage(state.lifeStage, false); setComposerDuration(10, false);
   await renderMedia(); refreshEditUI();
   toast('リセットしました');
 }
@@ -232,18 +253,13 @@ function openSettings() {
   els.settingsSheet.classList.add('open'); els.settingsSheet.setAttribute('aria-hidden', 'false');
 }
 function closeSettings() { els.settingsSheet.classList.remove('open'); els.settingsSheet.setAttribute('aria-hidden', 'true'); }
-
 async function pasteIntoApiField(input, label) {
   try {
     const text = await navigator.clipboard.readText();
     if (!text) { toast('クリップボードが空です'); return; }
-    input.value = text.trim();
-    input.focus();
-    toast(`${label}を貼り付けました`);
+    input.value = text.trim(); input.focus(); toast(`${label}を貼り付けました`);
   } catch (error) {
-    console.error(error);
-    input.focus();
-    toast('自動貼り付けが使えません。入力欄を長押しして貼り付けてください');
+    console.error(error); input.focus(); toast('自動貼り付けが使えません。入力欄を長押しして貼り付けてください');
   }
 }
 async function saveSettings() {
@@ -280,7 +296,7 @@ async function polishNote(rawNote, apiKey) {
           role: 'developer',
           content: [{
             type: 'input_text',
-            text: 'あなたは個人の記録を整える編集者です。ユーザーの入力を、後から読み返して出来事の流れと当時の感情が思い出せる、自然で読みやすい一人称の日本語に整理してください。事実、人物関係、時系列、結果、本人が書いた感情を絶対に変えないでください。入力にない出来事・動機・感情・結論を追加しないでください。道徳的評価、助言、分析、見出し、箇条書きは不要です。重複、言い直し、音声入力由来の崩れだけを整理し、本人の温度感は残してください。本文だけを返してください。'
+            text: 'あなたは個人の人生記録を整える編集者です。ユーザーの入力を、後から読み返して出来事の流れと当時の感情が思い出せる、自然で読みやすい一人称の日本語に整理してください。事実、人物関係、時系列、結果、本人が書いた感情を絶対に変えないでください。入力にない出来事・動機・感情・結論を追加しないでください。道徳的評価、助言、分析、見出し、箇条書きは不要です。重複、言い直し、音声入力由来の崩れだけを整理し、本人の温度感は残してください。本文だけを返してください。'
           }]
         },
         { role: 'user', content: [{ type: 'input_text', text }] }
@@ -304,14 +320,16 @@ async function beginEditRecord(id) {
   }
   editingRecordId = id; editOriginalRecord = structuredClone(record);
   state = normalizeDraft({ ...record, key: 'active', editingRecordId: id });
+  if (!stageById(state.lifeStage)) state.lifeStage = 'university';
   await putDraft();
   els.note.value = state.rawNote || ''; els.noteCount.textContent = String((state.rawNote || '').length);
-  setComposerDuration(state.videoDuration, false); await renderMedia(); refreshEditUI(); closeDetail(); showComposer();
+  setLifeStage(state.lifeStage, false); setComposerDuration(state.videoDuration, false); await renderMedia(); refreshEditUI(); closeDetail(); showComposer();
   toast('編集できます');
 }
 
 async function saveRecord() {
   if (els.save.disabled) return;
+  if (!stageById(state.lifeStage)) { toast('幼稚園・小学校・中学校・高校・大学から時期を選んでください'); return; }
   if (!recordHasContent(state)) { toast('まず写真・動画か出来事を残してください'); return; }
   const rawNote = (state.rawNote || '').trim();
   if (rawNote && !getOpenAIKey()) {
@@ -335,6 +353,7 @@ async function saveRecord() {
       saved = {
         ...original,
         schemaVersion: SCHEMA_VERSION,
+        lifeStage: state.lifeStage,
         rawNote,
         polishedNote,
         note: polishedNote || rawNote,
@@ -354,6 +373,7 @@ async function saveRecord() {
       saved = {
         id: crypto.randomUUID(),
         schemaVersion: SCHEMA_VERSION,
+        lifeStage: state.lifeStage,
         createdAt: now.toISOString(), occurredAt: now.toISOString(), localDate: localDate(now),
         rawNote, polishedNote, note: polishedNote || rawNote,
         mediaIds: [...state.mediaIds], videoId: state.videoId || null,
@@ -362,12 +382,11 @@ async function saveRecord() {
       };
       const tx = db.transaction(['moments', 'draft'], 'readwrite');
       tx.objectStore('moments').put(saved); tx.objectStore('draft').delete('active'); await txDone(tx);
-      toast('保存しました');
+      toast(`${stageLabel(saved.lifeStage)}に保存しました`);
     }
-    selectedDate = saved.localDate;
     state = freshDraft(); await putDraft();
-    els.note.value = ''; els.noteCount.textContent = '0'; setComposerDuration(10, false); await renderMedia(); refreshEditUI();
-    await renderCalendar(); await renderSelectedDate();
+    els.note.value = ''; els.noteCount.textContent = '0'; setLifeStage(state.lifeStage, false); setComposerDuration(10, false); await renderMedia(); refreshEditUI();
+    await renderLifeTimeline();
   } catch (error) {
     console.error(error); toast(error?.message || '保存できませんでした。入力は残っています', 4200); try { await putDraft(); } catch {}
   } finally {
@@ -382,51 +401,94 @@ async function deleteRecord(id) {
   tx.objectStore('moments').delete(id);
   for (const mediaId of record.mediaIds || []) tx.objectStore('media').delete(mediaId);
   if (record.videoId && stores.includes('videos')) tx.objectStore('videos').delete(record.videoId);
-  await txDone(tx); closeDetail(); await renderCalendar(); await renderSelectedDate(); toast('削除しました');
+  await txDone(tx); closeDetail(); await renderLifeTimeline(); toast('削除しました');
 }
 
-function showComposer() { els.pages.classList.remove('show-calendar'); }
-async function showCalendar() { els.pages.classList.add('show-calendar'); await renderCalendar(); await renderSelectedDate(); }
-async function renderCalendar() {
-  const all = await getAllRecords();
-  const grouped = new Map();
-  for (const record of all) { if (!grouped.has(record.localDate)) grouped.set(record.localDate, []); grouped.get(record.localDate).push(record); }
-  const y = currentMonth.getFullYear(), month = currentMonth.getMonth();
-  els.monthTitle.textContent = `${y}年 ${month + 1}月`; els.calendar.innerHTML = '';
-  const first = new Date(y, month, 1), start = new Date(y, month, 1 - first.getDay());
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start); d.setDate(start.getDate() + i);
-    const date = localDate(d), records = grouped.get(date) || [];
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'calendar-cell';
-    if (d.getMonth() !== month) button.classList.add('other');
-    if (date === localDate(new Date())) button.classList.add('today');
-    if (date === selectedDate) button.classList.add('selected');
-    button.innerHTML = `<span class="day-num">${d.getDate()}</span>${records.length ? `<span class="count">${records.length}</span><span class="record-dot"></span>` : '<span class="count" style="visibility:hidden">0</span>'}`;
-    button.addEventListener('click', async () => {
-      selectedDate = date; if (d.getMonth() !== month) currentMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-      await renderCalendar(); await renderSelectedDate();
-    });
-    els.calendar.append(button);
+function showComposer() { els.lifeTimeline.querySelectorAll('video').forEach(video => video.pause()); els.pages.classList.remove('show-life'); }
+async function showLife() { els.pages.classList.add('show-life'); await renderLifeTimeline(); }
+function jumpToStage(stageId) {
+  const target = document.getElementById(`life-${stageId}`);
+  if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function buildLifeNav() {
+  els.lifeStageNav.innerHTML = '';
+  for (const stage of LIFE_STAGES) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = stage.label;
+    button.addEventListener('click', () => jumpToStage(stage.id));
+    els.lifeStageNav.append(button);
   }
 }
-async function renderSelectedDate() {
-  els.selectedDateTitle.textContent = formatLongDate(selectedDate);
-  const records = (await getRecordsByDate(selectedDate)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-  els.selectedDateCount.textContent = records.length ? `${records.length}件` : ''; els.recordList.innerHTML = '';
-  if (!records.length) { els.recordList.innerHTML = '<p class="empty-message">この日はまだ何も残していません。</p>'; return; }
-  for (const record of records) {
-    const snippet = (record.polishedNote || record.rawNote || '').trim() || (record.mediaIds?.length ? '写真・動画の記録' : '記録');
-    const button = document.createElement('button'); button.type = 'button'; button.className = 'record-item';
-    button.innerHTML = `<span class="record-copy"><strong>${formatTime(record.createdAt)}${record.videoId ? ' · 生成動画あり' : ''}</strong><span>${escapeHtml(snippet)}</span></span><span class="record-arrow">›</span>`;
-    button.addEventListener('click', () => openDetail(record.id)); els.recordList.append(button);
+async function appendRecordPreview(container, record) {
+  const preview = document.createElement('div'); preview.className = 'life-record-preview';
+  if (record.videoId) {
+    const stored = await getVideo(record.videoId);
+    if (stored?.blob) {
+      const url = URL.createObjectURL(stored.blob); lifeObjectUrls.push(url);
+      const video = document.createElement('video'); video.src = url; video.controls = true; video.playsInline = true; video.preload = 'metadata';
+      preview.append(video); container.append(preview); return;
+    }
+  }
+  const firstId = record.mediaIds?.[0];
+  if (firstId) {
+    const media = await getMedia(firstId);
+    if (media?.blob) {
+      const url = URL.createObjectURL(media.blob); lifeObjectUrls.push(url);
+      if (media.blob.type.startsWith('video/')) {
+        const video = document.createElement('video'); video.src = url; video.muted = true; video.playsInline = true; video.preload = 'metadata';
+        preview.append(video);
+      } else {
+        const img = document.createElement('img'); img.src = url; img.alt = '記録した写真'; preview.append(img);
+      }
+      container.append(preview);
+    }
+  }
+}
+async function buildLifeRecordCard(record) {
+  const article = document.createElement('article'); article.className = 'life-record-card';
+  await appendRecordPreview(article, record);
+  const body = document.createElement('div'); body.className = 'life-record-body';
+  const meta = document.createElement('div'); meta.className = 'life-record-meta';
+  meta.innerHTML = `<span>${record.videoId ? '生成動画あり' : '記録'}</span><span>${escapeHtml(formatSavedAt(record.createdAt))}</span>`;
+  const p = document.createElement('p');
+  p.textContent = (record.polishedNote || record.rawNote || '').trim() || '写真・動画の記録';
+  const actions = document.createElement('div'); actions.className = 'life-record-actions';
+  const open = document.createElement('button'); open.type = 'button'; open.className = 'life-record-open'; open.textContent = '開く'; open.addEventListener('click', () => openDetail(record.id));
+  actions.append(open); body.append(meta, p, actions); article.append(body); return article;
+}
+async function renderLifeTimeline() {
+  revokeUrls(lifeObjectUrls);
+  const all = (await getAllRecords()).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  els.lifeTimeline.innerHTML = '';
+  let index = 1;
+  for (const stage of LIFE_STAGES) {
+    const records = all.filter(record => record.lifeStage === stage.id);
+    const section = document.createElement('section'); section.className = 'life-section'; section.id = `life-${stage.id}`;
+    const head = document.createElement('div'); head.className = 'life-section-head';
+    head.innerHTML = `<div class="life-stage-title"><span class="life-stage-index">${String(index).padStart(2, '0')}</span><h2>${stage.label}</h2></div><span class="life-section-count">${records.length ? `${records.length}件` : ''}</span>`;
+    const list = document.createElement('div'); list.className = 'life-records';
+    if (!records.length) {
+      const empty = document.createElement('div'); empty.className = 'life-empty'; empty.textContent = `${stage.label}の記憶はまだありません。`; list.append(empty);
+    } else {
+      for (const record of records) list.append(await buildLifeRecordCard(record));
+    }
+    section.append(head, list); els.lifeTimeline.append(section); index++;
+  }
+  const legacy = all.filter(record => !stageById(record.lifeStage));
+  if (legacy.length) {
+    const section = document.createElement('section'); section.className = 'life-section'; section.id = 'life-unclassified';
+    const head = document.createElement('div'); head.className = 'life-section-head';
+    head.innerHTML = `<div class="life-stage-title"><span class="life-stage-index">旧</span><h2>これまでの記録</h2></div><span class="life-section-count">${legacy.length}件</span>`;
+    const list = document.createElement('div'); list.className = 'life-records';
+    for (const record of legacy) list.append(await buildLifeRecordCard(record));
+    section.append(head, list); els.lifeTimeline.append(section);
   }
 }
 
 function renderDetailStory(record) {
   const polished = (record.polishedNote || record.rawNote || '').trim();
   const raw = (record.rawNote || record.note || '').trim();
-  const canShowPolished = Boolean(polished);
-  if (!canShowPolished) detailStoryMode = 'raw';
+  if (!polished) detailStoryMode = 'raw';
   els.detailPolishedTab.classList.toggle('selected', detailStoryMode === 'polished');
   els.detailRawTab.classList.toggle('selected', detailStoryMode === 'raw');
   els.detailStory.textContent = detailStoryMode === 'polished' ? (polished || '文章はありません。') : (raw || '元の文章はありません。');
@@ -434,8 +496,8 @@ function renderDetailStory(record) {
 async function openDetail(id) {
   const record = await getRecord(id); if (!record) return;
   detailRecordId = id; detailStoryMode = record.polishedNote ? 'polished' : 'raw';
-  els.detailDate.textContent = formatLongDate(record.localDate);
-  els.detailTime.textContent = formatTime(record.createdAt) + (record.editedAt ? ' · 編集済み' : '');
+  els.detailStage.textContent = stageLabel(record.lifeStage);
+  els.detailTime.textContent = `保存 ${formatSavedAt(record.createdAt)}${record.editedAt ? ' · 編集済み' : ''}`;
   revokeUrls(detailObjectUrls); els.detailMedia.innerHTML = '';
   for (const mediaId of record.mediaIds || []) {
     const media = await getMedia(mediaId); if (!media?.blob) continue;
@@ -470,24 +532,30 @@ async function buildVideoPrompt(record, segmentDuration, totalDuration) {
   const rawNote = (record.rawNote ?? record.note ?? '').trim() || '(no written record)';
   const polished = (record.polishedNote || '').trim();
   const media = await mediaSummary(record);
+  const lifePeriod = stagePrompt(record.lifeStage);
   const continuation = totalDuration > segmentDuration
     ? `This is the opening ${segmentDuration} seconds of a ${totalDuration}-second final video. Cover as many early story beats as possible and leave a clean transition for continuation.`
-    : `The complete output is about ${segmentDuration} seconds. Fit the whole recorded event into this duration.`;
+    : `The complete output is about ${segmentDuration} seconds. Fit the whole recorded experience into this duration.`;
   return [
-    'Create a vertical video that traces a real personal experience from the supplied record.',
+    'Create a vertical AI memory video that traces a real part of the user\'s life from the supplied record.',
+    `LIFE PERIOD: ${lifePeriod}. Keep age, school context, clothing, surroundings and behavior consistent with this period whenever the record or references support them. Do not invent an exact age if it is not known.`,
     'CORE EDITING METHOD: FAST-CUT MEMORY MONTAGE. First identify every distinct factual story beat in the written record and reference media. Then cover the FULL progression instead of expanding only one scene.',
-    'Use many short cuts, usually about 0.4-1.4 seconds each. Move quickly through setup, effort/actions, encounters, changes, turning points, outcome, and aftermath when those beats exist. Do not spend most of the runtime on a single generic shot.',
-    'Make the emotional contrast strong and immediately legible while staying natural. Joy can be visibly exuberant, lively, close and energetic. Strong disappointment or hurt can be visibly embodied and intense. If strong sadness is clearly supported by the record, tears may be used as expressive dramatization. Never change the factual outcome or invent a new event just to create drama.',
-    'Use pacing contrast: fast montage for repeated actions and passage of time; briefly slow down the strongest turning point; then accelerate or cut sharply into the result. The viewer should feel the rise and fall of the experience, not a flat reenactment.',
+    'Use many short cuts, usually about 0.35-1.25 seconds each. Move quickly through setup, effort/actions, encounters, changes, turning points, outcome, and aftermath when those beats exist. Do not spend most of the runtime on a single generic shot.',
+    'EMOTIONAL PERFORMANCE: make the emotions substantially stronger and more physically expressive than a flat reenactment, but only in directions clearly supported by the record. Amplify expression, not facts.',
+    'When strong joy, relief, excitement or triumph is supported, allow audible spontaneous Japanese reactions such as short exclamations like 「やった！」, laughter, shouting with joy, running, jumping, hugging, fist pumps or other energetic body language when contextually appropriate.',
+    'When strong frustration, anger, heartbreak, fear or sadness is supported, allow visibly intense reactions such as raised voice, crying, sobbing, trembling, collapsing posture, covering the face, clenched hands or abrupt silence when contextually appropriate. Do not add a negative emotion that the record does not support.',
+    'Use HIGH EMOTIONAL DYNAMIC RANGE. Contrast quiet moments with peaks. A strong rise, emotional peak, sudden drop, or aftermath should feel clearly different in performance, sound, camera energy and pacing. Do not make every shot equally intense.',
+    'Short natural spoken reactions are allowed when they express an emotion already present in the record. Do not invent detailed dialogue, claims, promises, or conversations that were not recorded.',
     'Treat supplied photos and videos as direct visual evidence. Preserve recognizable places, people, clothing and context when established by the references.',
     'Treat screenshots as documentary evidence of what happened, not an instruction to fabricate a long fake phone UI scene. Use their meaning without letting a screenshot dominate the whole video.',
     'Do not invent a visible face or full body for the user when the references do not establish their appearance. In that case use POV, hands, environment, partial framing, silhouettes, objects or other grounded visual choices.',
-    'Do not add a moral lesson, motivational message, psychoanalysis, forced nostalgia, or forced beauty. Do not add captions, generated readable chat text, or narration unless the record itself clearly requires spoken dialogue.',
+    'Do not add a moral lesson, motivational message, psychoanalysis, or an explanation of what the experience means. Do not force nostalgia or sadness. The feeling should arise from the life record itself.',
+    'Do not add captions, generated readable chat text, or narration unless the record itself clearly requires spoken words.',
     `Original written record: ${rawNote}`,
     polished ? `Readable version of the same record: ${polished}` : '',
     `Reference media: ${media.images} image(s), ${media.videos} video(s).`,
     continuation,
-    'Output: 9:16 portrait, native ambient audio, visually coherent across cuts. The priority is FULL-STORY COVERAGE + STRONG EMOTIONAL DYNAMICS + FIDELITY TO THE RECORD.'
+    'Output: 9:16 portrait, native ambient audio, visually coherent across cuts. Priority order: FULL-STORY COVERAGE + HIGH EMOTIONAL DYNAMIC RANGE + FIDELITY TO THE RECORD + FAST CUTS.'
   ].filter(Boolean).join('\n');
 }
 async function blobToBase64(blob) {
@@ -526,25 +594,15 @@ function extractVideoOutput(payload) {
 function base64ToBlob(base64, mime = 'video/mp4') { const bytes = atob(base64), arr = new Uint8Array(bytes.length); for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i); return new Blob([arr], { type: mime }); }
 function fileIdFromUri(uri = '') { return uri.match(/files\/([^/:?]+)/)?.[1] || null; }
 async function geminiFetch(url, options = {}, stage = '通信') {
-  try {
-    return await fetch(url, options);
-  } catch (error) {
-    console.error(`Gemini ${stage} network error`, error);
-    throw new Error(`Gemini通信失敗（${stage}）。ページを再読み込みして再試行してください。`);
-  }
+  try { return await fetch(url, options); }
+  catch (error) { console.error(`Gemini ${stage} network error`, error); throw new Error(`Gemini通信失敗（${stage}）。ページを再読み込みして再試行してください。`); }
 }
 async function createOmniInteraction(body, apiKey) {
-  // Current official Omni REST form: API key in the query string, Content-Type only.
-  // Keeping this a simple browser request avoids the extra custom-header preflight path.
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(apiKey)}`;
   const response = await geminiFetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, store: true }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, store: true }),
   }, '生成開始');
-  const raw = await response.text();
-  let payload = {};
-  try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+  const raw = await response.text(); let payload = {}; try { payload = raw ? JSON.parse(raw) : {}; } catch {}
   if (!response.ok) throw new Error(payload?.error?.message || `Gemini API ${response.status}`);
   return payload;
 }
@@ -552,9 +610,7 @@ async function getInteractionInlineVideo(interactionId, apiKey) {
   if (!interactionId) return null;
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/interactions/${encodeURIComponent(interactionId)}?key=${encodeURIComponent(apiKey)}`;
   const response = await geminiFetch(endpoint, { method: 'GET' }, '動画取得');
-  const raw = await response.text();
-  let payload = {};
-  try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+  const raw = await response.text(); let payload = {}; try { payload = raw ? JSON.parse(raw) : {}; } catch {}
   if (!response.ok) throw new Error(payload?.error?.message || `Gemini動画取得 ${response.status}`);
   if (payload?.status === 'failed') throw new Error(payload?.errors?.[0]?.message || 'Gemini側で動画生成に失敗しました');
   const output = extractVideoOutput(payload);
@@ -565,10 +621,6 @@ async function resolveVideoOutput(payload, apiKey) {
   const output = extractVideoOutput(payload);
   if (!output) throw new Error('Geminiから動画情報が返りませんでした');
   if (output.data) return base64ToBlob(output.data, output.mime_type || 'video/mp4');
-
-  // Omni's current docs state that GET /interactions/{id} returns video data inline
-  // even when the create request used delivery="uri". Prefer that path in the browser;
-  // it avoids relying on the separate Files download path, which is another network/CORS hop.
   if (payload?.id) {
     for (let i = 0; i < 8; i++) {
       const inline = await getInteractionInlineVideo(payload.id, apiKey);
@@ -576,17 +628,11 @@ async function resolveVideoOutput(payload, apiKey) {
       await sleep(1500);
     }
   }
-
-  // Fallback to the documented Files API flow if inline retrieval is not yet available.
   if (!output.uri) throw new Error('動画データも動画URIも返りませんでした');
   const fileId = fileIdFromUri(output.uri);
   if (!fileId) throw new Error('動画ファイルIDを取得できませんでした');
   for (let i = 0; i < 120; i++) {
-    const statusResponse = await geminiFetch(
-      `https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}?key=${encodeURIComponent(apiKey)}`,
-      { method: 'GET' },
-      '動画処理確認'
-    );
+    const statusResponse = await geminiFetch(`https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}?key=${encodeURIComponent(apiKey)}`, { method: 'GET' }, '動画処理確認');
     if (!statusResponse.ok) throw new Error(`動画処理の確認に失敗しました (${statusResponse.status})`);
     const info = await statusResponse.json();
     const status = typeof info.state === 'string' ? info.state : info.state?.name;
@@ -595,11 +641,7 @@ async function resolveVideoOutput(payload, apiKey) {
     if (i === 119) throw new Error('動画生成がタイムアウトしました');
     await sleep(3000);
   }
-  const download = await geminiFetch(
-    `https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}:download?alt=media&key=${encodeURIComponent(apiKey)}`,
-    { method: 'GET' },
-    '動画ダウンロード'
-  );
+  const download = await geminiFetch(`https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}:download?alt=media&key=${encodeURIComponent(apiKey)}`, { method: 'GET' }, '動画ダウンロード');
   if (!download.ok) throw new Error(`動画の取得に失敗しました (${download.status})`);
   return download.blob();
 }
@@ -627,7 +669,7 @@ async function omniGenerateVideo(record, apiKey, duration) {
     payload = await createOmniInteraction({
       model: OMNI_MODEL,
       previous_interaction_id: interactionId,
-      input: `Extend the video by 10 seconds. Continue the FAST-CUT MEMORY MONTAGE across any remaining factual story beats from the original record. Do not linger on one scene. Preserve the same people, context, emotional curve and factual outcome. Keep strong emotional contrast without inventing new events. Target total length: about ${currentTotal} seconds.`,
+      input: `Extend the video by 10 seconds. Continue the FAST-CUT MEMORY MONTAGE across any remaining factual life beats from the original record. Keep HIGH EMOTIONAL DYNAMIC RANGE and strong physical/vocal emotional performance where supported. Do not linger on one scene. Preserve the same people, age period, context and factual outcome. Target total length: about ${currentTotal} seconds.`,
       response_format: { type: 'video', delivery: 'uri', aspect_ratio: '9:16', resolution: '720p' },
       generation_config: { video_config: { task: 'extend' } },
       background: false, stream: false,
@@ -640,7 +682,8 @@ async function omniGenerateVideo(record, apiKey, duration) {
 function openVideoLoading(duration = 10) {
   if (activeVideoUrl) { URL.revokeObjectURL(activeVideoUrl); activeVideoUrl = null; }
   els.videoPlayer.pause(); els.videoPlayer.removeAttribute('src'); els.videoPlayer.hidden = true;
-  els.videoLoading.hidden = false; els.videoLoadingCopy.textContent = duration > 10 ? `${duration}秒動画を生成中… 全体の流れをつないでいます。` : '記録の全体を高速なカットで構成しています。';
+  els.videoLoading.hidden = false;
+  els.videoLoadingCopy.textContent = duration > 10 ? `${duration}秒動画を生成中… 人生の流れをつないでいます。` : '人生の記憶を高速なカットと強い感情表現で構成しています。';
   els.videoModal.classList.add('open'); els.videoModal.setAttribute('aria-hidden', 'false');
 }
 function showVideoBlob(blob) {
@@ -658,12 +701,13 @@ async function startGeneration(job) {
   let record;
   if (job.type === 'draft') record = { ...structuredClone(state), createdAt: new Date().toISOString(), localDate: localDate(new Date()) };
   else { record = await getRecord(job.id); if (!record) { toast('記録が見つかりません'); return; } }
+  if (!stageById(record.lifeStage)) { toast('まず人生の時期を選んでください'); return; }
   if (!recordHasContent(record)) { toast('まず写真・動画か出来事を残してください'); return; }
   const duration = normalizeDuration(job.duration || record.videoDuration || 10);
   generationBusy = true; els.generateVideo.disabled = true; els.detailGenerateVideo.disabled = true; openVideoLoading(duration);
   try {
     const result = await omniGenerateVideo(record, getGeminiKey(), duration);
-    const newId = await saveVideo(result.blob, { model: OMNI_MODEL, interactionId: result.interactionId || null, duration });
+    const newId = await saveVideo(result.blob, { model: OMNI_MODEL, interactionId: result.interactionId || null, duration, lifeStage: record.lifeStage });
     if (job.type === 'draft') {
       const oldId = state.videoId, originalVideoId = editOriginalRecord?.videoId || null;
       if (oldId && oldId !== originalVideoId) await deleteVideo(oldId).catch(() => {});
@@ -675,7 +719,7 @@ async function startGeneration(job) {
         latest.videoId = newId; latest.videoDuration = duration; latest.videoGeneratedAt = new Date().toISOString(); latest.videoModel = OMNI_MODEL; await putRecord(latest);
       }
       if (detailRecordId === job.id) { els.detailViewVideo.hidden = false; els.detailGenerateVideo.textContent = '動画を再生成'; setDetailDuration(duration); }
-      await renderSelectedDate();
+      await renderLifeTimeline();
     }
     showVideoBlob(result.blob); toast('動画を生成しました');
   } catch (error) {
@@ -688,38 +732,36 @@ async function startGeneration(job) {
 function bindSwipe() {
   document.addEventListener('touchstart', event => {
     if (els.detailModal.classList.contains('open') || els.videoModal.classList.contains('open') || els.settingsSheet.classList.contains('open')) return;
-    if (event.target.closest('textarea,input,button,label')) return;
+    if (event.target.closest('textarea,input,button,label,video')) return;
     const touch = event.touches[0]; swipeStart = { x: touch.clientX, y: touch.clientY };
   }, { passive: true });
   document.addEventListener('touchend', event => {
     if (!swipeStart) return;
     const touch = event.changedTouches[0], dx = touch.clientX - swipeStart.x, dy = touch.clientY - swipeStart.y; swipeStart = null;
     if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
-    if (dx < 0) showCalendar(); else showComposer();
+    if (dx < 0) showLife(); else showComposer();
   }, { passive: true });
 }
 
 function cacheElements() {
   const ids = [
-    'app','pages','draft-indicator','settings-open','reset-draft','calendar-open','media-input','media-strip','media-empty','note','note-count','duration-label','duration-options','save','generate-video',
-    'calendar-back','month-prev','month-next','month-title','today','calendar','selected-date-title','selected-date-count','record-list',
+    'app','pages','draft-indicator','settings-open','reset-draft','life-open','stage-label','stage-options','media-input','media-strip','media-empty','note','note-count','duration-label','duration-options','save','generate-video',
+    'life-back','life-new','life-stage-nav','life-timeline',
     'settings-sheet','settings-close','openai-key','openai-paste','gemini-key','gemini-paste','settings-save',
-    'detail-modal','detail-date','detail-time','detail-edit','detail-close','detail-media','detail-polished-tab','detail-raw-tab','detail-story','detail-duration-label','detail-duration-options','detail-generate-video','detail-view-video','detail-delete',
+    'detail-modal','detail-stage','detail-time','detail-edit','detail-close','detail-media','detail-polished-tab','detail-raw-tab','detail-story','detail-duration-label','detail-duration-options','detail-generate-video','detail-view-video','detail-delete',
     'video-modal','video-close','video-loading','video-loading-copy','video-player','toast'
   ];
   for (const id of ids) els[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = $(id);
 }
 function bindEvents() {
   els.note.addEventListener('input', () => { state.rawNote = els.note.value; state.polishedNote = ''; els.noteCount.textContent = String(state.rawNote.length); queueDraft(); });
+  els.stageOptions.addEventListener('click', event => { const button = event.target.closest('[data-stage]'); if (button) setLifeStage(button.dataset.stage); });
   els.mediaInput.addEventListener('change', () => addMedia(els.mediaInput.files));
   els.durationOptions.addEventListener('click', event => { const button = event.target.closest('[data-duration]'); if (button) setComposerDuration(button.dataset.duration); });
   els.save.addEventListener('click', saveRecord);
   els.generateVideo.addEventListener('click', () => startGeneration({ type: 'draft', duration: state.videoDuration }));
   els.resetDraft.addEventListener('click', () => resetComposer(true));
-  els.calendarOpen.addEventListener('click', showCalendar); els.calendarBack.addEventListener('click', showComposer);
-  els.monthPrev.addEventListener('click', async () => { currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1); await renderCalendar(); });
-  els.monthNext.addEventListener('click', async () => { currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1); await renderCalendar(); });
-  els.today.addEventListener('click', async () => { const now = new Date(); currentMonth = new Date(now.getFullYear(), now.getMonth(), 1); selectedDate = localDate(now); await renderCalendar(); await renderSelectedDate(); });
+  els.lifeOpen.addEventListener('click', showLife); els.lifeBack.addEventListener('click', showComposer); els.lifeNew.addEventListener('click', showComposer);
   els.settingsOpen.addEventListener('click', () => { pendingAction = null; openSettings(); });
   els.settingsClose.addEventListener('click', closeSettings); document.querySelector('[data-close-settings]').addEventListener('click', closeSettings); els.settingsSave.addEventListener('click', saveSettings);
   els.openaiPaste.addEventListener('click', () => pasteIntoApiField(els.openaiKey, 'OpenAI APIキー'));
@@ -737,21 +779,24 @@ function bindEvents() {
 }
 
 async function init() {
-  cacheElements(); bindEvents();
+  cacheElements(); bindEvents(); buildLifeNav();
   try {
     db = await openDB();
     const saved = await getDraft(); state = normalizeDraft(saved);
     editingRecordId = state.editingRecordId || null;
     if (editingRecordId) editOriginalRecord = await getRecord(editingRecordId);
+    if (!stageById(state.lifeStage)) state.lifeStage = 'university';
     els.note.value = state.rawNote || ''; els.noteCount.textContent = String((state.rawNote || '').length);
-    setComposerDuration(state.videoDuration, false); await renderMedia(); refreshEditUI();
-    await putDraft(); await renderCalendar(); await renderSelectedDate();
+    setLifeStage(state.lifeStage, false); setComposerDuration(state.videoDuration, false); await renderMedia(); refreshEditUI();
+    await putDraft(); await renderLifeTimeline();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   } catch (error) {
     console.error(error); toast('記録データを読み込めませんでした', 5000);
   }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=8').catch(console.error);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=12').catch(console.error);
 }
 
-window.addEventListener('beforeunload', () => { revokeUrls(mediaObjectUrls); revokeUrls(detailObjectUrls); if (activeVideoUrl) URL.revokeObjectURL(activeVideoUrl); });
+window.addEventListener('beforeunload', () => {
+  revokeUrls(mediaObjectUrls); revokeUrls(detailObjectUrls); revokeUrls(lifeObjectUrls); if (activeVideoUrl) URL.revokeObjectURL(activeVideoUrl);
+});
 init();

@@ -4,12 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
   <meta name="theme-color" content="#f3f2ee" />
-  <meta name="description" content="残したい出来事を、写真・動画・文章から記録する。" />
+  <meta name="description" content="人生の記憶を、写真・動画・文章からAI動画として残す。" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>Goblin Moment</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./styles.css?v=11" />
+  <link rel="stylesheet" href="./styles.css?v=12" />
 </head>
 <body>
   <main id="app" class="app">
@@ -23,14 +23,25 @@
           <div class="topbar-actions">
             <button id="settings-open" class="ghost-icon" type="button" aria-label="API設定">⚙</button>
             <button id="reset-draft" class="topbar-text-button" type="button">リセット</button>
-            <button id="calendar-open" class="ghost-icon" type="button" aria-label="カレンダー">▦</button>
+            <button id="life-open" class="topbar-text-button life-open-button" type="button">人生</button>
           </div>
         </header>
 
         <section class="entry-area">
           <div class="intro-copy">
-            <h1>残したい出来事を、そのまま。</h1>
-            <p>写真・動画と、覚えていることを書く。</p>
+            <h1>人生の記憶を、映像にする。</h1>
+            <p>いつの頃かを選び、写真・動画と覚えていることを残す。</p>
+          </div>
+
+          <div class="stage-block card">
+            <div class="entry-label-row"><strong>いつの記憶？</strong><span id="stage-label">大学</span></div>
+            <div id="stage-options" class="stage-options" role="group" aria-label="人生の時期">
+              <button type="button" data-stage="kindergarten">幼稚園</button>
+              <button type="button" data-stage="elementary">小学校</button>
+              <button type="button" data-stage="middle">中学校</button>
+              <button type="button" data-stage="high">高校</button>
+              <button type="button" data-stage="university" class="selected">大学</button>
+            </div>
           </div>
 
           <div class="media-block card">
@@ -45,8 +56,8 @@
           </div>
 
           <div class="note-block card">
-            <div class="entry-label-row"><strong>出来事</strong><span id="note-count">0</span></div>
-            <textarea id="note" rows="9" maxlength="20000" placeholder="起きたこと、言われたこと、その時どう感じたか。思い出せるまま書く。"></textarea>
+            <div class="entry-label-row"><strong>その頃の出来事</strong><span id="note-count">0</span></div>
+            <textarea id="note" rows="9" maxlength="20000" placeholder="その頃どんなことがあったか、誰といたか、何を頑張っていたか、何を感じていたか。思い出せるまま書く。"></textarea>
             <p class="helper">保存すると、入力した内容をGPTが事実を変えずに読みやすい文章へ整理します。</p>
           </div>
 
@@ -64,29 +75,19 @@
             <button id="save" class="save-button" type="button">保存</button>
             <button id="generate-video" class="generate-button" type="button">動画生成</button>
           </div>
-          <p class="swipe-guide">左へスワイプするとカレンダー</p>
+          <p class="swipe-guide">左へスワイプすると人生の記録</p>
         </section>
       </section>
 
-      <section id="calendar-page" class="page calendar-page" aria-label="カレンダー">
-        <header class="calendar-topbar">
-          <button id="calendar-back" class="ghost-icon" type="button" aria-label="戻る">←</button>
-          <div class="month-title-wrap">
-            <button id="month-prev" class="month-button" type="button" aria-label="前の月">‹</button>
-            <strong id="month-title"></strong>
-            <button id="month-next" class="month-button" type="button" aria-label="次の月">›</button>
-          </div>
-          <button id="today" class="today-button" type="button">今日</button>
+      <section id="life-page" class="page life-page" aria-label="人生の記録">
+        <header class="life-topbar">
+          <button id="life-back" class="ghost-icon" type="button" aria-label="戻る">←</button>
+          <div class="life-title"><strong>人生</strong><span>記憶を時代ごとに振り返る</span></div>
+          <button id="life-new" class="topbar-text-button" type="button">記録する</button>
         </header>
-
-        <div class="weekdays" aria-hidden="true"><span>日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span>土</span></div>
-        <div id="calendar" class="calendar-grid"></div>
-
-        <section class="day-history">
-          <div class="history-heading"><strong id="selected-date-title">日付を選択</strong><span id="selected-date-count"></span></div>
-          <div id="record-list" class="record-list"><p class="empty-message">記録した日を押すと、ここにその日の記録が出ます。</p></div>
-        </section>
-        <p class="swipe-guide calendar-swipe">右へスワイプすると記録画面</p>
+        <nav id="life-stage-nav" class="life-stage-nav" aria-label="人生の時期"></nav>
+        <div id="life-timeline" class="life-timeline"></div>
+        <p class="swipe-guide life-swipe">右へスワイプすると記録画面</p>
       </section>
     </div>
   </main>
@@ -95,7 +96,7 @@
     <button class="sheet-backdrop" data-close-settings aria-label="閉じる"></button>
     <section class="sheet-card settings-card" role="dialog" aria-modal="true" aria-label="API設定">
       <div class="sheet-handle"></div>
-      <header><strong>API設定 · v11</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
+      <header><strong>API設定 · v12</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
       <p class="api-note">この試作版ではAPIキーをこの端末のブラウザ内だけに保存します。公開運用ではサーバー経由に変更してください。</p>
 
       <div class="api-field">
@@ -126,7 +127,7 @@
     <button class="detail-backdrop" data-close-detail aria-label="閉じる"></button>
     <article class="detail-card">
       <header class="detail-header">
-        <div><strong id="detail-date"></strong><span id="detail-time"></span></div>
+        <div><strong id="detail-stage"></strong><span id="detail-time"></span></div>
         <div class="detail-header-actions">
           <button id="detail-edit" class="topbar-text-button" type="button">編集</button>
           <button id="detail-close" class="ghost-icon" type="button">×</button>
@@ -163,12 +164,12 @@
     <button class="detail-backdrop" data-close-video aria-label="閉じる"></button>
     <article class="video-card">
       <header class="detail-header"><div><strong>生成された動画</strong><span id="video-model-label">Gemini Omni Flash</span></div><button id="video-close" class="ghost-icon" type="button">×</button></header>
-      <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span id="video-loading-copy">記録の全体を高速なカットで構成しています。</span></div>
+      <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span id="video-loading-copy">人生の記憶を高速なカットと強い感情表現で構成しています。</span></div>
       <video id="video-player" controls playsinline loop hidden></video>
     </article>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./app.js?v=11"></script>
+  <script type="module" src="./app.js?v=12"></script>
 </body>
 </html>
