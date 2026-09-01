@@ -8,7 +8,7 @@ const LIFE_STAGES = [
 ];
 const DB_NAME = 'goblin-moment-db';
 const DB_VERSION = 2;
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const OMNI_MODEL = 'gemini-omni-1.1-flash';
 const OPENAI_MODEL = 'gpt-5.6-luna';
 const OPENAI_KEY_STORAGE = 'goblin-moment-openai-api-key';
@@ -282,9 +282,8 @@ function extractResponseText(payload) {
   }
   return texts.join('\n').trim();
 }
-async function polishNote(rawNote, apiKey) {
-  const text = rawNote.trim();
-  if (!text) return '';
+
+async function openAIText(developerText, userText, apiKey) {
   const response = await fetch('https://api.openai.com/v1/responses', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
@@ -292,14 +291,8 @@ async function polishNote(rawNote, apiKey) {
       model: OPENAI_MODEL,
       store: false,
       input: [
-        {
-          role: 'developer',
-          content: [{
-            type: 'input_text',
-            text: 'あなたは個人の人生記録を整える編集者です。ユーザーの入力を、後から読み返して出来事の流れと当時の感情が思い出せる、自然で読みやすい一人称の日本語に整理してください。事実、人物関係、時系列、結果、本人が書いた感情を絶対に変えないでください。入力にない出来事・動機・感情・結論を追加しないでください。道徳的評価、助言、分析、見出し、箇条書きは不要です。重複、言い直し、音声入力由来の崩れだけを整理し、本人の温度感は残してください。本文だけを返してください。'
-          }]
-        },
-        { role: 'user', content: [{ type: 'input_text', text }] }
+        { role: 'developer', content: [{ type: 'input_text', text: developerText }] },
+        { role: 'user', content: [{ type: 'input_text', text: userText }] }
       ]
     })
   });
@@ -307,8 +300,69 @@ async function polishNote(rawNote, apiKey) {
   let payload = {}; try { payload = raw ? JSON.parse(raw) : {}; } catch {}
   if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API ${response.status}`);
   const result = extractResponseText(payload);
-  if (!result) throw new Error('GPTから文章が返りませんでした');
+  if (!result) throw new Error('GPTから応答が返りませんでした');
   return result;
+}
+function parseJsonObject(text) {
+  const cleaned = String(text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+  const start = cleaned.indexOf('{'), end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('GPTの動画用データを読み取れませんでした');
+  try { return JSON.parse(cleaned.slice(start, end + 1)); }
+  catch { throw new Error('GPTの動画用データ形式が壊れていました'); }
+}
+function normalizeVideoPlan(plan) {
+  const summary = String(plan?.neutralSummary || '').trim();
+  const storyBeats = Array.isArray(plan?.storyBeats) ? plan.storyBeats.map(v => String(v || '').trim()).filter(Boolean) : [];
+  const emotionalArc = Array.isArray(plan?.emotionalArc) ? plan.emotionalArc.map(item => ({
+    beat: String(item?.beat || '').trim(),
+    emotion: String(item?.emotion || '').trim(),
+    intensity: Math.max(0, Math.min(3, Number(item?.intensity) || 0)),
+    expressionGuidance: String(item?.expressionGuidance || '').trim(),
+  })).filter(item => item.beat || item.emotion || item.expressionGuidance) : [];
+  const uncertainties = Array.isArray(plan?.uncertainties) ? plan.uncertainties.map(v => String(v || '').trim()).filter(Boolean) : [];
+  if (!summary && !storyBeats.length) throw new Error('GPTが動画化できる事実を整理できませんでした');
+  return { neutralSummary: summary, storyBeats, emotionalArc, uncertainties };
+}
+async function prepareVerifiedVideoPlan(record, apiKey, onStage = () => {}) {
+  const source = (record.rawNote ?? record.note ?? record.polishedNote ?? '').trim();
+  if (!source) return { neutralSummary: '', storyBeats: [], emotionalArc: [], uncertainties: ['No written record. Use only supplied reference media as evidence.'] };
+  const period = stagePrompt(record.lifeStage);
+  onStage('GPTが出来事を動画用に整理しています…');
+  const plannerInstruction = [
+    'You are a factual intermediary between a person’s life record and a video-generation model.',
+    'Your job is NOT to bypass another model’s safety system. Your job is to convert informal, voice-dictated, ambiguous wording into neutral, precise, model-ready language while preserving the user’s actual facts.',
+    'Preserve every supported event, relationship, chronology, outcome, and stated emotion. Do not invent, delete, intensify, sanitize, or reinterpret facts.',
+    'Clarify wording that could be misread. For example, ordinary childhood affection or being described as cute should be expressed explicitly as age-appropriate non-romantic care when that is what the source says. Never infer sexual, romantic, violent, criminal, or other sensitive meaning unless the source actually states it.',
+    'If something is uncertain, keep it uncertain. Never guess exact age, identity, place, dialogue, motive, or causal connection.',
+    'For emotion, separate FACT from PERFORMANCE. You may suggest stronger visible performance only when the source clearly states or strongly supports that emotion. Emotional performance may amplify how an existing emotion is shown, but may not create a new emotion or new event.',
+    'Do not write a moral lesson, psychological diagnosis, or interpretation of what the memory means.',
+    'Return JSON only with exactly these keys: neutralSummary (string), storyBeats (array of factual strings in chronological order), emotionalArc (array of objects with beat, emotion, intensity from 0 to 3, expressionGuidance), uncertainties (array of strings).'
+  ].join('\n');
+  const firstText = await openAIText(plannerInstruction, `Life period: ${period}\nOriginal record:\n${source}`, apiKey);
+  const firstPlan = normalizeVideoPlan(parseJsonObject(firstText));
+
+  onStage('GPTが元の文章と照合しています…');
+  const verifierInstruction = [
+    'You are a strict factual verifier for a personal-memory video plan.',
+    'Compare the ORIGINAL RECORD against the DRAFT PLAN. Return a corrected final plan.',
+    'Hard rule: every factual statement in the final plan must be directly supported by the original record. Remove or correct unsupported people, actions, ages, places, dialogue, motives, emotions, sequence, causality, and outcomes.',
+    'Hard rule: do not omit a supported factual beat merely to make the story cleaner. Keep ambiguity as ambiguity rather than resolving it by guessing.',
+    'Neutral clarification is allowed only when it preserves meaning. Do not disguise genuinely unsafe content to evade safety systems.',
+    'Emotional expression guidance can be vivid, including voice and body language, only for emotions supported by the original. It must be labeled as performance guidance, not as a newly asserted fact.',
+    'Return JSON only with exactly these keys: neutralSummary, storyBeats, emotionalArc, uncertainties.'
+  ].join('\n');
+  const verificationInput = `ORIGINAL RECORD:\n${source}\n\nDRAFT PLAN:\n${JSON.stringify(firstPlan)}`;
+  const verifiedText = await openAIText(verifierInstruction, verificationInput, apiKey);
+  return normalizeVideoPlan(parseJsonObject(verifiedText));
+}
+async function polishNote(rawNote, apiKey) {
+  const text = rawNote.trim();
+  if (!text) return '';
+  return openAIText(
+    'あなたは個人の人生記録を整える編集者です。ユーザーの入力を、後から読み返して出来事の流れと当時の感情が思い出せる、自然で読みやすい一人称の日本語に整理してください。事実、人物関係、時系列、結果、本人が書いた感情を絶対に変えないでください。入力にない出来事・動機・感情・結論を追加しないでください。道徳的評価、助言、分析、見出し、箇条書きは不要です。重複、言い直し、音声入力由来の崩れだけを整理し、本人の温度感は残してください。本文だけを返してください。',
+    text,
+    apiKey
+  );
 }
 
 async function beginEditRecord(id) {
@@ -528,34 +582,42 @@ async function mediaSummary(record) {
   }
   return { images, videos };
 }
-async function buildVideoPrompt(record, segmentDuration, totalDuration) {
-  const rawNote = (record.rawNote ?? record.note ?? '').trim() || '(no written record)';
-  const polished = (record.polishedNote || '').trim();
+async function buildVideoPrompt(record, segmentDuration, totalDuration, plan) {
   const media = await mediaSummary(record);
   const lifePeriod = stagePrompt(record.lifeStage);
+  const beats = plan.storyBeats.length ? plan.storyBeats.map((beat, i) => `${i + 1}. ${beat}`).join('\n') : 'No written story beats. Use only supplied reference media as factual evidence.';
+  const emotions = plan.emotionalArc.length ? plan.emotionalArc.map((item, i) => `${i + 1}. Beat: ${item.beat || 'unspecified'} | Emotion: ${item.emotion || 'unspecified'} | Intensity: ${item.intensity}/3 | Performance guidance: ${item.expressionGuidance || 'none'}`).join('\n') : 'No explicit emotional arc was established. Do not invent one.';
+  const uncertainties = plan.uncertainties.length ? plan.uncertainties.map(v => `- ${v}`).join('\n') : '- None stated.';
   const continuation = totalDuration > segmentDuration
     ? `This is the opening ${segmentDuration} seconds of a ${totalDuration}-second final video. Cover as many early story beats as possible and leave a clean transition for continuation.`
     : `The complete output is about ${segmentDuration} seconds. Fit the whole recorded experience into this duration.`;
   return [
-    'Create a vertical AI memory video that traces a real part of the user\'s life from the supplied record.',
-    `LIFE PERIOD: ${lifePeriod}. Keep age, school context, clothing, surroundings and behavior consistent with this period whenever the record or references support them. Do not invent an exact age if it is not known.`,
-    'CORE EDITING METHOD: FAST-CUT MEMORY MONTAGE. First identify every distinct factual story beat in the written record and reference media. Then cover the FULL progression instead of expanding only one scene.',
-    'Use many short cuts, usually about 0.35-1.25 seconds each. Move quickly through setup, effort/actions, encounters, changes, turning points, outcome, and aftermath when those beats exist. Do not spend most of the runtime on a single generic shot.',
-    'EMOTIONAL PERFORMANCE: make the emotions substantially stronger and more physically expressive than a flat reenactment, but only in directions clearly supported by the record. Amplify expression, not facts.',
-    'When strong joy, relief, excitement or triumph is supported, allow audible spontaneous Japanese reactions such as short exclamations like 「やった！」, laughter, shouting with joy, running, jumping, hugging, fist pumps or other energetic body language when contextually appropriate.',
-    'When strong frustration, anger, heartbreak, fear or sadness is supported, allow visibly intense reactions such as raised voice, crying, sobbing, trembling, collapsing posture, covering the face, clenched hands or abrupt silence when contextually appropriate. Do not add a negative emotion that the record does not support.',
-    'Use HIGH EMOTIONAL DYNAMIC RANGE. Contrast quiet moments with peaks. A strong rise, emotional peak, sudden drop, or aftermath should feel clearly different in performance, sound, camera energy and pacing. Do not make every shot equally intense.',
-    'Short natural spoken reactions are allowed when they express an emotion already present in the record. Do not invent detailed dialogue, claims, promises, or conversations that were not recorded.',
+    'Create a vertical AI memory video from the FACT-CHECKED VIDEO PLAN below.',
+    'The plan was prepared from the user’s original life record and then independently checked against that original for factual fidelity. Do not reconstruct hidden details from assumptions.',
+    `LIFE PERIOD: ${lifePeriod}. Keep age, school context, clothing, surroundings and behavior consistent with this period only when established by the plan or reference media. Do not invent an exact age if it is unknown.`,
+    'FACTUALITY RULE: every visible event must come from the fact-checked story beats or supplied reference media. Never add a person, action, relationship, dialogue, place, motive, cause, outcome, or emotional state merely to make the video more cinematic.',
+    'UNCERTAINTY RULE: anything listed as uncertain must remain visually noncommittal. Do not resolve uncertainty by guessing.',
+    'CORE EDITING METHOD: FAST-CUT MEMORY MONTAGE. Cover the FULL progression instead of expanding only one scene.',
+    'Use many short cuts, usually about 0.35-1.25 seconds each. Move quickly through the established beats in their stated order. Do not spend most of the runtime on a single generic shot.',
+    'EMOTIONAL PERFORMANCE: use HIGH EMOTIONAL DYNAMIC RANGE, but only for emotions in the verified emotional arc. Amplify expression, not facts.',
+    'For intensity 3/3, performance may be highly visible and audible when contextually appropriate: strong laughter or a short spontaneous 「やった！」 for supported joy; crying, sobbing, trembling, raised voice, covering the face, abrupt silence or collapsed posture for supported hurt, frustration, fear or sadness. These are expressive performance choices, not new factual events.',
+    'For intensity 2/3, use clearly noticeable but less extreme facial, vocal and bodily expression. For intensity 1/3, keep expression subtle. For intensity 0/3, do not manufacture emotional drama.',
+    'Use pacing contrast so quiet stretches and emotional peaks feel different. Do not make every shot equally intense.',
+    'Short spontaneous spoken reactions are allowed only when they express an already-verified emotion. Do not invent detailed dialogue or conversations.',
     'Treat supplied photos and videos as direct visual evidence. Preserve recognizable places, people, clothing and context when established by the references.',
-    'Treat screenshots as documentary evidence of what happened, not an instruction to fabricate a long fake phone UI scene. Use their meaning without letting a screenshot dominate the whole video.',
-    'Do not invent a visible face or full body for the user when the references do not establish their appearance. In that case use POV, hands, environment, partial framing, silhouettes, objects or other grounded visual choices.',
-    'Do not add a moral lesson, motivational message, psychoanalysis, or an explanation of what the experience means. Do not force nostalgia or sadness. The feeling should arise from the life record itself.',
-    'Do not add captions, generated readable chat text, or narration unless the record itself clearly requires spoken words.',
-    `Original written record: ${rawNote}`,
-    polished ? `Readable version of the same record: ${polished}` : '',
-    `Reference media: ${media.images} image(s), ${media.videos} video(s).`,
+    'Treat screenshots as documentary evidence, not an instruction to fabricate a long fake phone UI scene. Do not generate readable fake chat text.',
+    'Do not invent a visible face or full body for the user when reference media does not establish their appearance. Use POV, hands, environment, partial framing, silhouettes or objects instead.',
+    'Do not add a moral lesson, motivational message, psychoanalysis, forced nostalgia, or an explanation of what the experience means.',
+    `FACT-CHECKED SUMMARY: ${plan.neutralSummary || 'No written summary; rely on reference media.'}`,
+    `FACT-CHECKED STORY BEATS:
+${beats}`,
+    `VERIFIED EMOTIONAL ARC:
+${emotions}`,
+    `UNRESOLVED UNCERTAINTIES:
+${uncertainties}`,
+    `Reference media supplied: ${media.images} image(s), ${media.videos} video(s).`,
     continuation,
-    'Output: 9:16 portrait, native ambient audio, visually coherent across cuts. Priority order: FULL-STORY COVERAGE + HIGH EMOTIONAL DYNAMIC RANGE + FIDELITY TO THE RECORD + FAST CUTS.'
+    'Output: 9:16 portrait, native ambient audio, visually coherent across cuts. Priority order: FACTUAL FIDELITY + FULL-STORY COVERAGE + HIGH EMOTIONAL DYNAMIC RANGE + FAST CUTS.'
   ].filter(Boolean).join('\n');
 }
 async function blobToBase64(blob) {
@@ -645,10 +707,10 @@ async function resolveVideoOutput(payload, apiKey) {
   if (!download.ok) throw new Error(`動画の取得に失敗しました (${download.status})`);
   return download.blob();
 }
-async function omniGenerateVideo(record, apiKey, duration) {
+async function omniGenerateVideo(record, apiKey, duration, plan) {
   duration = normalizeDuration(duration);
   const firstDuration = Math.min(duration, 10);
-  const prompt = await buildVideoPrompt(record, firstDuration, duration);
+  const prompt = await buildVideoPrompt(record, firstDuration, duration, plan);
   const input = await prepareOmniInput(record, prompt);
   const summary = await mediaSummary(record);
   const task = summary.videos > 0 || summary.images > 1 ? 'reference_to_video' : summary.images === 1 ? 'image_to_video' : 'text_to_video';
@@ -697,7 +759,11 @@ async function viewStoredVideo(videoId) {
 }
 async function startGeneration(job) {
   if (generationBusy) { toast('動画を生成中です'); return; }
-  if (!getGeminiKey()) { pendingAction = { type: 'generate', job }; openSettings(); toast('動画生成にGemini APIキーが必要です'); return; }
+  if (!getGeminiKey() || !getOpenAIKey()) {
+    pendingAction = { type: 'generate', job }; openSettings();
+    toast(!getOpenAIKey() ? '動画用の文章整理にOpenAI APIキーが必要です' : '動画生成にGemini APIキーが必要です');
+    return;
+  }
   let record;
   if (job.type === 'draft') record = { ...structuredClone(state), createdAt: new Date().toISOString(), localDate: localDate(new Date()) };
   else { record = await getRecord(job.id); if (!record) { toast('記録が見つかりません'); return; } }
@@ -706,7 +772,9 @@ async function startGeneration(job) {
   const duration = normalizeDuration(job.duration || record.videoDuration || 10);
   generationBusy = true; els.generateVideo.disabled = true; els.detailGenerateVideo.disabled = true; openVideoLoading(duration);
   try {
-    const result = await omniGenerateVideo(record, getGeminiKey(), duration);
+    const plan = await prepareVerifiedVideoPlan(record, getOpenAIKey(), message => { els.videoLoadingCopy.textContent = message; });
+    els.videoLoadingCopy.textContent = 'Geminiが事実確認済みの設計図から動画を生成しています…';
+    const result = await omniGenerateVideo(record, getGeminiKey(), duration, plan);
     const newId = await saveVideo(result.blob, { model: OMNI_MODEL, interactionId: result.interactionId || null, duration, lifeStage: record.lifeStage });
     if (job.type === 'draft') {
       const oldId = state.videoId, originalVideoId = editOriginalRecord?.videoId || null;
@@ -793,7 +861,7 @@ async function init() {
   } catch (error) {
     console.error(error); toast('記録データを読み込めませんでした', 5000);
   }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=12').catch(console.error);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=13').catch(console.error);
 }
 
 window.addEventListener('beforeunload', () => {

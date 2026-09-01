@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>Goblin Moment</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./styles.css?v=12" />
+  <link rel="stylesheet" href="./styles.css?v=13" />
 </head>
 <body>
   <main id="app" class="app">
@@ -96,7 +96,7 @@
     <button class="sheet-backdrop" data-close-settings aria-label="閉じる"></button>
     <section class="sheet-card settings-card" role="dialog" aria-modal="true" aria-label="API設定">
       <div class="sheet-handle"></div>
-      <header><strong>API設定 · v12</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
+      <header><strong>API設定 · v13</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
       <p class="api-note">この試作版ではAPIキーをこの端末のブラウザ内だけに保存します。公開運用ではサーバー経由に変更してください。</p>
 
       <div class="api-field">
@@ -106,7 +106,7 @@
           <button id="openai-paste" class="paste-button" type="button">貼り付け</button>
         </div>
       </div>
-      <p class="field-note">保存時の文章整理に使用</p>
+      <p class="field-note">保存時の文章整理・動画生成前の事実整理に使用</p>
 
       <div class="api-field">
         <span>Gemini API キー</span>
@@ -170,6 +170,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./app.js?v=12"></script>
+  <script type="module" src="./app.js?v=13"></script>
 </body>
 </html>
