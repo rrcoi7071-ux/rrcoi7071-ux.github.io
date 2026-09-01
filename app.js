@@ -525,31 +525,81 @@ function extractVideoOutput(payload) {
 }
 function base64ToBlob(base64, mime = 'video/mp4') { const bytes = atob(base64), arr = new Uint8Array(bytes.length); for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i); return new Blob([arr], { type: mime }); }
 function fileIdFromUri(uri = '') { return uri.match(/files\/([^/:?]+)/)?.[1] || null; }
+async function geminiFetch(url, options = {}, stage = '通信') {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    console.error(`Gemini ${stage} network error`, error);
+    throw new Error(`Gemini通信失敗（${stage}）。ページを再読み込みして再試行してください。`);
+  }
+}
 async function createOmniInteraction(body, apiKey) {
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
+  // Current official Omni REST form: API key in the query string, Content-Type only.
+  // Keeping this a simple browser request avoids the extra custom-header preflight path.
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/interactions?key=${encodeURIComponent(apiKey)}`;
+  const response = await geminiFetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey, 'Api-Revision': '2026-05-20' },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, store: true }),
-  });
-  const raw = await response.text(); let payload = {}; try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+  }, '生成開始');
+  const raw = await response.text();
+  let payload = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch {}
   if (!response.ok) throw new Error(payload?.error?.message || `Gemini API ${response.status}`);
   return payload;
 }
+async function getInteractionInlineVideo(interactionId, apiKey) {
+  if (!interactionId) return null;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/interactions/${encodeURIComponent(interactionId)}?key=${encodeURIComponent(apiKey)}`;
+  const response = await geminiFetch(endpoint, { method: 'GET' }, '動画取得');
+  const raw = await response.text();
+  let payload = {};
+  try { payload = raw ? JSON.parse(raw) : {}; } catch {}
+  if (!response.ok) throw new Error(payload?.error?.message || `Gemini動画取得 ${response.status}`);
+  if (payload?.status === 'failed') throw new Error(payload?.errors?.[0]?.message || 'Gemini側で動画生成に失敗しました');
+  const output = extractVideoOutput(payload);
+  if (output?.data) return base64ToBlob(output.data, output.mime_type || 'video/mp4');
+  return null;
+}
 async function resolveVideoOutput(payload, apiKey) {
-  const output = extractVideoOutput(payload); if (!output) throw new Error('動画データが返りませんでした');
+  const output = extractVideoOutput(payload);
+  if (!output) throw new Error('Geminiから動画情報が返りませんでした');
   if (output.data) return base64ToBlob(output.data, output.mime_type || 'video/mp4');
-  if (!output.uri) throw new Error('動画URIが返りませんでした');
-  const fileId = fileIdFromUri(output.uri); if (!fileId) throw new Error('動画ファイルIDを取得できませんでした');
+
+  // Omni's current docs state that GET /interactions/{id} returns video data inline
+  // even when the create request used delivery="uri". Prefer that path in the browser;
+  // it avoids relying on the separate Files download path, which is another network/CORS hop.
+  if (payload?.id) {
+    for (let i = 0; i < 8; i++) {
+      const inline = await getInteractionInlineVideo(payload.id, apiKey);
+      if (inline) return inline;
+      await sleep(1500);
+    }
+  }
+
+  // Fallback to the documented Files API flow if inline retrieval is not yet available.
+  if (!output.uri) throw new Error('動画データも動画URIも返りませんでした');
+  const fileId = fileIdFromUri(output.uri);
+  if (!fileId) throw new Error('動画ファイルIDを取得できませんでした');
   for (let i = 0; i < 120; i++) {
-    const statusResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}?key=${encodeURIComponent(apiKey)}`);
+    const statusResponse = await geminiFetch(
+      `https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}?key=${encodeURIComponent(apiKey)}`,
+      { method: 'GET' },
+      '動画処理確認'
+    );
     if (!statusResponse.ok) throw new Error(`動画処理の確認に失敗しました (${statusResponse.status})`);
-    const info = await statusResponse.json(); const status = typeof info.state === 'string' ? info.state : info.state?.name;
+    const info = await statusResponse.json();
+    const status = typeof info.state === 'string' ? info.state : info.state?.name;
     if (status === 'ACTIVE') break;
-    if (status === 'FAILED') throw new Error('動画生成に失敗しました');
+    if (status === 'FAILED') throw new Error('Gemini側で動画生成に失敗しました');
     if (i === 119) throw new Error('動画生成がタイムアウトしました');
     await sleep(3000);
   }
-  const download = await fetch(`https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}:download?alt=media&key=${encodeURIComponent(apiKey)}`);
+  const download = await geminiFetch(
+    `https://generativelanguage.googleapis.com/v1beta/files/${encodeURIComponent(fileId)}:download?alt=media&key=${encodeURIComponent(apiKey)}`,
+    { method: 'GET' },
+    '動画ダウンロード'
+  );
   if (!download.ok) throw new Error(`動画の取得に失敗しました (${download.status})`);
   return download.blob();
 }
