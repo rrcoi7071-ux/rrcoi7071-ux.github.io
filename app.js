@@ -10,9 +10,12 @@ const DB_NAME = 'goblin-moment-db';
 const DB_VERSION = 2;
 const SCHEMA_VERSION = 6;
 const OMNI_MODEL = 'gemini-omni-1.1-flash';
+const SEEDANCE_MODEL = 'dreamina-seedance-2-0-mini-260615';
 const OPENAI_MODEL = 'gpt-5.6-luna';
 const OPENAI_KEY_STORAGE = 'goblin-moment-openai-api-key';
 const GEMINI_KEY_STORAGE = 'goblin-moment-gemini-api-key';
+const BYTEPLUS_KEY_STORAGE = 'goblin-moment-byteplus-api-key';
+const VIDEO_PROVIDER_STORAGE = 'goblin-moment-video-provider';
 const MAX_MEDIA = 8;
 
 const els = {};
@@ -247,9 +250,35 @@ async function resetComposer(ask = true) {
 
 function getOpenAIKey() { return localStorage.getItem(OPENAI_KEY_STORAGE) || ''; }
 function getGeminiKey() { return localStorage.getItem(GEMINI_KEY_STORAGE) || ''; }
+function getBytePlusKey() { return localStorage.getItem(BYTEPLUS_KEY_STORAGE) || ''; }
+function getVideoProvider() {
+  const value = localStorage.getItem(VIDEO_PROVIDER_STORAGE);
+  return value === 'gemini' ? 'gemini' : 'seedance';
+}
+function providerLabel(provider = getVideoProvider()) { return provider === 'gemini' ? 'Gemini Omni Flash' : 'Seedance 2.0 Mini'; }
+function setProviderButtons(provider) {
+  els.videoProviderOptions?.querySelectorAll('[data-provider]').forEach(button => button.classList.toggle('selected', button.dataset.provider === provider));
+}
+function applyProviderDurationRules(provider = getVideoProvider()) {
+  const seedance = provider === 'seedance';
+  for (const root of [els.durationOptions, els.detailDurationOptions]) {
+    if (!root) continue;
+    root.querySelectorAll('[data-duration]').forEach(button => {
+      const duration = Number(button.dataset.duration);
+      button.disabled = seedance && duration > 15;
+      button.title = button.disabled ? 'Seedance 2.0 Miniは最大15秒です' : '';
+    });
+  }
+  if (seedance && state.videoDuration > 15) setComposerDuration(10, false);
+  if (seedance && detailDuration > 15) setDetailDuration(10);
+}
 function openSettings() {
+  const provider = getVideoProvider();
   els.openaiKey.value = getOpenAIKey();
+  els.byteplusKey.value = getBytePlusKey();
   els.geminiKey.value = getGeminiKey();
+  setProviderButtons(provider);
+  applyProviderDurationRules(provider);
   els.settingsSheet.classList.add('open'); els.settingsSheet.setAttribute('aria-hidden', 'false');
 }
 function closeSettings() { els.settingsSheet.classList.remove('open'); els.settingsSheet.setAttribute('aria-hidden', 'true'); }
@@ -264,9 +293,14 @@ async function pasteIntoApiField(input, label) {
 }
 async function saveSettings() {
   const openAIKey = els.openaiKey.value.trim();
+  const bytePlusKey = els.byteplusKey.value.trim();
   const geminiKey = els.geminiKey.value.trim();
+  const provider = els.videoProviderOptions.querySelector('[data-provider].selected')?.dataset.provider || 'seedance';
   if (openAIKey) localStorage.setItem(OPENAI_KEY_STORAGE, openAIKey); else localStorage.removeItem(OPENAI_KEY_STORAGE);
+  if (bytePlusKey) localStorage.setItem(BYTEPLUS_KEY_STORAGE, bytePlusKey); else localStorage.removeItem(BYTEPLUS_KEY_STORAGE);
   if (geminiKey) localStorage.setItem(GEMINI_KEY_STORAGE, geminiKey); else localStorage.removeItem(GEMINI_KEY_STORAGE);
+  localStorage.setItem(VIDEO_PROVIDER_STORAGE, provider);
+  applyProviderDurationRules(provider);
   closeSettings(); toast('API設定を保存しました');
   if (pendingAction) {
     const action = pendingAction; pendingAction = null;
@@ -377,7 +411,7 @@ async function beginEditRecord(id) {
   if (!stageById(state.lifeStage)) state.lifeStage = 'university';
   await putDraft();
   els.note.value = state.rawNote || ''; els.noteCount.textContent = String((state.rawNote || '').length);
-  setLifeStage(state.lifeStage, false); setComposerDuration(state.videoDuration, false); await renderMedia(); refreshEditUI(); closeDetail(); showComposer();
+  setLifeStage(state.lifeStage, false); setComposerDuration(state.videoDuration, false); applyProviderDurationRules(getVideoProvider()); await renderMedia(); refreshEditUI(); closeDetail(); showComposer();
   toast('編集できます');
 }
 
@@ -741,9 +775,133 @@ async function omniGenerateVideo(record, apiKey, duration, plan) {
   return { blob, interactionId };
 }
 
-function openVideoLoading(duration = 10) {
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('ファイルを読み取れませんでした'));
+    reader.readAsDataURL(blob);
+  });
+}
+async function extractVideoFrameForSeedance(blob) {
+  const url = URL.createObjectURL(blob);
+  const video = document.createElement('video');
+  video.muted = true; video.playsInline = true; video.preload = 'auto'; video.src = url;
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('動画フレームの読み込みがタイムアウトしました')), 12000);
+      video.onloadeddata = () => { clearTimeout(timer); resolve(); };
+      video.onerror = () => { clearTimeout(timer); reject(new Error('動画フレームを読み取れませんでした')); };
+      video.load();
+    });
+    const target = Number.isFinite(video.duration) && video.duration > .3 ? Math.min(.5, video.duration * .2) : 0;
+    if (target > 0) {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('動画フレームの取得がタイムアウトしました')), 8000);
+        video.onseeked = () => { clearTimeout(timer); resolve(); };
+        video.currentTime = target;
+      });
+    }
+    const width = video.videoWidth || 720, height = video.videoHeight || 1280;
+    const maxSide = 1100, scale = Math.min(1, maxSide / Math.max(width, height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d', { alpha: false });
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return await new Promise(resolve => canvas.toBlob(result => resolve(result), 'image/jpeg', .8));
+  } finally {
+    video.removeAttribute('src'); video.load(); URL.revokeObjectURL(url);
+  }
+}
+async function prepareSeedanceContent(record, prompt) {
+  const content = [{ type: 'text', text: prompt }];
+  let referenceCount = 0;
+  for (const id of (record.mediaIds || []).slice(0, MAX_MEDIA)) {
+    if (referenceCount >= 9) break;
+    const media = await getMedia(id); if (!media?.blob) continue;
+    try {
+      let imageBlob = null;
+      if (media.blob.type.startsWith('image/')) imageBlob = await compressImageForAI(media.blob);
+      else if (media.blob.type.startsWith('video/')) imageBlob = await extractVideoFrameForSeedance(media.blob);
+      if (!imageBlob) continue;
+      content.push({
+        type: 'image_url',
+        image_url: { url: await blobToDataUrl(imageBlob) },
+        role: 'reference_image'
+      });
+      referenceCount++;
+    } catch (error) {
+      console.warn('Seedance reference preparation skipped', error);
+    }
+  }
+  return content;
+}
+async function seedanceFetch(url, options = {}, stage = '通信') {
+  try { return await fetch(url, options); }
+  catch (error) {
+    console.error(`Seedance ${stage} network error`, error);
+    throw new Error(`Seedance通信失敗（${stage}）。ブラウザからBytePlusへ接続できない場合はサーバー中継が必要です。`);
+  }
+}
+async function parseProviderResponse(response) {
+  const raw = await response.text();
+  let payload = {}; try { payload = raw ? JSON.parse(raw) : {}; } catch { payload = { raw }; }
+  return payload;
+}
+function bytePlusError(payload, fallback) {
+  return payload?.error?.message || payload?.error?.code || payload?.message || payload?.raw || fallback;
+}
+async function seedanceGenerateVideo(record, apiKey, duration, plan) {
+  duration = Math.max(4, Math.min(15, Number(duration) || 10));
+  const prompt = await buildVideoPrompt(record, duration, duration, plan);
+  const content = await prepareSeedanceContent(record, prompt);
+  const base = 'https://ark.ap-southeast.bytepluses.com/api/v3/contents/generations/tasks';
+  const response = await seedanceFetch(base, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model: SEEDANCE_MODEL,
+      content,
+      resolution: '720p',
+      ratio: '9:16',
+      duration,
+      generate_audio: true,
+      watermark: false,
+      return_last_frame: false,
+    })
+  }, '生成開始');
+  const created = await parseProviderResponse(response);
+  if (!response.ok) throw new Error(bytePlusError(created, `BytePlus API ${response.status}`));
+  const taskId = created?.id;
+  if (!taskId) throw new Error('SeedanceのタスクIDを取得できませんでした');
+
+  let completed = null;
+  for (let i = 0; i < 180; i++) {
+    if (i > 0) await sleep(3000);
+    const statusResponse = await seedanceFetch(`${base}/${encodeURIComponent(taskId)}`, {
+      method: 'GET', headers: { 'Authorization': `Bearer ${apiKey}` }
+    }, '動画処理確認');
+    const task = await parseProviderResponse(statusResponse);
+    if (!statusResponse.ok) throw new Error(bytePlusError(task, `Seedance動画確認 ${statusResponse.status}`));
+    const status = String(task?.status || '').toLowerCase();
+    if (status === 'succeeded') { completed = task; break; }
+    if (['failed','cancelled','expired'].includes(status)) throw new Error(bytePlusError(task, `Seedance側で動画生成に失敗しました (${status || 'unknown'})`));
+    els.videoLoadingCopy.textContent = status === 'queued' ? 'Seedance 2.0 Miniで生成待ちです…' : 'Seedance 2.0 Miniが動画を生成しています…';
+  }
+  if (!completed) throw new Error('Seedance動画生成がタイムアウトしました');
+  const videoUrl = completed?.content?.video_url;
+  if (!videoUrl) throw new Error('Seedanceから動画URLが返りませんでした');
+  const download = await seedanceFetch(videoUrl, { method: 'GET' }, '動画ダウンロード');
+  if (!download.ok) throw new Error(`Seedance動画の取得に失敗しました (${download.status})`);
+  const blob = await download.blob();
+  if (!blob?.size) throw new Error('Seedance動画データが空でした');
+  return { blob, taskId, usage: completed?.usage || null };
+}
+
+function openVideoLoading(duration = 10, provider = getVideoProvider()) {
   if (activeVideoUrl) { URL.revokeObjectURL(activeVideoUrl); activeVideoUrl = null; }
   els.videoPlayer.pause(); els.videoPlayer.removeAttribute('src'); els.videoPlayer.hidden = true;
+  els.videoModelLabel.textContent = providerLabel(provider);
   els.videoLoading.hidden = false;
   els.videoLoadingCopy.textContent = duration > 10 ? `${duration}秒動画を生成中… 人生の流れをつないでいます。` : '人生の記憶を高速なカットと強い感情表現で構成しています。';
   els.videoModal.classList.add('open'); els.videoModal.setAttribute('aria-hidden', 'false');
@@ -755,13 +913,17 @@ function showVideoBlob(blob) {
 function closeVideo() { els.videoModal.classList.remove('open'); els.videoModal.setAttribute('aria-hidden', 'true'); els.videoPlayer.pause(); }
 async function viewStoredVideo(videoId) {
   const record = await getVideo(videoId); if (!record?.blob) { toast('動画が見つかりません'); return; }
+  els.videoModelLabel.textContent = record.provider === 'seedance' || record.model === SEEDANCE_MODEL ? 'Seedance 2.0 Mini' : 'Gemini Omni Flash';
   els.videoModal.classList.add('open'); els.videoModal.setAttribute('aria-hidden', 'false'); showVideoBlob(record.blob);
 }
 async function startGeneration(job) {
   if (generationBusy) { toast('動画を生成中です'); return; }
-  if (!getGeminiKey() || !getOpenAIKey()) {
+  const provider = getVideoProvider();
+  const providerKey = provider === 'seedance' ? getBytePlusKey() : getGeminiKey();
+  if (!getOpenAIKey() || !providerKey) {
     pendingAction = { type: 'generate', job }; openSettings();
-    toast(!getOpenAIKey() ? '動画用の文章整理にOpenAI APIキーが必要です' : '動画生成にGemini APIキーが必要です');
+    if (!getOpenAIKey()) toast('動画用の文章整理にOpenAI APIキーが必要です');
+    else toast(provider === 'seedance' ? 'Seedance生成にBytePlus APIキーが必要です' : '動画生成にGemini APIキーが必要です');
     return;
   }
   let record;
@@ -770,12 +932,21 @@ async function startGeneration(job) {
   if (!stageById(record.lifeStage)) { toast('まず人生の時期を選んでください'); return; }
   if (!recordHasContent(record)) { toast('まず写真・動画か出来事を残してください'); return; }
   const duration = normalizeDuration(job.duration || record.videoDuration || 10);
-  generationBusy = true; els.generateVideo.disabled = true; els.detailGenerateVideo.disabled = true; openVideoLoading(duration);
+  if (provider === 'seedance' && duration > 15) { toast('Seedance 2.0 Miniは最大15秒です。5秒か10秒を選んでください'); return; }
+  generationBusy = true; els.generateVideo.disabled = true; els.detailGenerateVideo.disabled = true; openVideoLoading(duration, provider);
   try {
     const plan = await prepareVerifiedVideoPlan(record, getOpenAIKey(), message => { els.videoLoadingCopy.textContent = message; });
-    els.videoLoadingCopy.textContent = 'Geminiが事実確認済みの設計図から動画を生成しています…';
-    const result = await omniGenerateVideo(record, getGeminiKey(), duration, plan);
-    const newId = await saveVideo(result.blob, { model: OMNI_MODEL, interactionId: result.interactionId || null, duration, lifeStage: record.lifeStage });
+    let result, model;
+    if (provider === 'seedance') {
+      els.videoLoadingCopy.textContent = 'Seedance 2.0 Miniが事実確認済みの設計図から動画を生成しています…';
+      result = await seedanceGenerateVideo(record, getBytePlusKey(), duration, plan);
+      model = SEEDANCE_MODEL;
+    } else {
+      els.videoLoadingCopy.textContent = 'Geminiが事実確認済みの設計図から動画を生成しています…';
+      result = await omniGenerateVideo(record, getGeminiKey(), duration, plan);
+      model = OMNI_MODEL;
+    }
+    const newId = await saveVideo(result.blob, { model, provider, interactionId: result.interactionId || null, taskId: result.taskId || null, duration, lifeStage: record.lifeStage });
     if (job.type === 'draft') {
       const oldId = state.videoId, originalVideoId = editOriginalRecord?.videoId || null;
       if (oldId && oldId !== originalVideoId) await deleteVideo(oldId).catch(() => {});
@@ -784,7 +955,7 @@ async function startGeneration(job) {
       const latest = await getRecord(job.id);
       if (latest) {
         if (latest.videoId) await deleteVideo(latest.videoId).catch(() => {});
-        latest.videoId = newId; latest.videoDuration = duration; latest.videoGeneratedAt = new Date().toISOString(); latest.videoModel = OMNI_MODEL; await putRecord(latest);
+        latest.videoId = newId; latest.videoDuration = duration; latest.videoGeneratedAt = new Date().toISOString(); latest.videoModel = model; latest.videoProvider = provider; await putRecord(latest);
       }
       if (detailRecordId === job.id) { els.detailViewVideo.hidden = false; els.detailGenerateVideo.textContent = '動画を再生成'; setDetailDuration(duration); }
       await renderLifeTimeline();
@@ -815,9 +986,9 @@ function cacheElements() {
   const ids = [
     'app','pages','draft-indicator','settings-open','reset-draft','life-open','stage-label','stage-options','media-input','media-strip','media-empty','note','note-count','duration-label','duration-options','save','generate-video',
     'life-back','life-new','life-stage-nav','life-timeline',
-    'settings-sheet','settings-close','openai-key','openai-paste','gemini-key','gemini-paste','settings-save',
+    'settings-sheet','settings-close','video-provider-options','openai-key','openai-paste','byteplus-key','byteplus-paste','gemini-key','gemini-paste','settings-save',
     'detail-modal','detail-stage','detail-time','detail-edit','detail-close','detail-media','detail-polished-tab','detail-raw-tab','detail-story','detail-duration-label','detail-duration-options','detail-generate-video','detail-view-video','detail-delete',
-    'video-modal','video-close','video-loading','video-loading-copy','video-player','toast'
+    'video-modal','video-close','video-model-label','video-loading','video-loading-copy','video-player','toast'
   ];
   for (const id of ids) els[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = $(id);
 }
@@ -832,7 +1003,12 @@ function bindEvents() {
   els.lifeOpen.addEventListener('click', showLife); els.lifeBack.addEventListener('click', showComposer); els.lifeNew.addEventListener('click', showComposer);
   els.settingsOpen.addEventListener('click', () => { pendingAction = null; openSettings(); });
   els.settingsClose.addEventListener('click', closeSettings); document.querySelector('[data-close-settings]').addEventListener('click', closeSettings); els.settingsSave.addEventListener('click', saveSettings);
+  els.videoProviderOptions.addEventListener('click', event => {
+    const button = event.target.closest('[data-provider]'); if (!button) return;
+    setProviderButtons(button.dataset.provider); applyProviderDurationRules(button.dataset.provider);
+  });
   els.openaiPaste.addEventListener('click', () => pasteIntoApiField(els.openaiKey, 'OpenAI APIキー'));
+  els.byteplusPaste.addEventListener('click', () => pasteIntoApiField(els.byteplusKey, 'BytePlus APIキー'));
   els.geminiPaste.addEventListener('click', () => pasteIntoApiField(els.geminiKey, 'Gemini APIキー'));
   els.detailClose.addEventListener('click', closeDetail); document.querySelector('[data-close-detail]').addEventListener('click', closeDetail);
   els.detailEdit.addEventListener('click', () => detailRecordId && beginEditRecord(detailRecordId));
@@ -855,13 +1031,13 @@ async function init() {
     if (editingRecordId) editOriginalRecord = await getRecord(editingRecordId);
     if (!stageById(state.lifeStage)) state.lifeStage = 'university';
     els.note.value = state.rawNote || ''; els.noteCount.textContent = String((state.rawNote || '').length);
-    setLifeStage(state.lifeStage, false); setComposerDuration(state.videoDuration, false); await renderMedia(); refreshEditUI();
+    setLifeStage(state.lifeStage, false); setComposerDuration(state.videoDuration, false); applyProviderDurationRules(getVideoProvider()); await renderMedia(); refreshEditUI();
     await putDraft(); await renderLifeTimeline();
     if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   } catch (error) {
     console.error(error); toast('記録データを読み込めませんでした', 5000);
   }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=13').catch(console.error);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js?v=14').catch(console.error);
 }
 
 window.addEventListener('beforeunload', () => {

@@ -116,3 +116,8 @@ button{cursor:pointer}
 .toast{position:fixed;left:50%;bottom:calc(28px + env(safe-area-inset-bottom));z-index:300;transform:translate(-50%,20px);max-width:calc(100% - 32px);padding:11px 15px;border-radius:14px;background:#1f1f1d;color:white;font-size:13px;opacity:0;pointer-events:none;transition:.2s}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 @media(min-width:800px){.entry-area{padding-top:30px}.detail-card{inset:34px}.sheet-card{bottom:20px;border-radius:28px}.life-timeline{padding-top:28px}}
+
+.provider-options{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:5px;background:#f0efeb;border-radius:17px}
+.provider-options button{min-height:47px;border:0;border-radius:13px;background:transparent;color:#7c7972;font-weight:800;padding:0 10px}
+.provider-options button.selected{background:#1d1d1a;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.duration-options button:disabled{opacity:.3;cursor:not-allowed}

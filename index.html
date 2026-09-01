@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>Goblin Moment</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./styles.css?v=13" />
+  <link rel="stylesheet" href="./styles.css?v=14" />
 </head>
 <body>
   <main id="app" class="app">
@@ -96,7 +96,7 @@
     <button class="sheet-backdrop" data-close-settings aria-label="閉じる"></button>
     <section class="sheet-card settings-card" role="dialog" aria-modal="true" aria-label="API設定">
       <div class="sheet-handle"></div>
-      <header><strong>API設定 · v13</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
+      <header><strong>API設定 · v14</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
       <p class="api-note">この試作版ではAPIキーをこの端末のブラウザ内だけに保存します。公開運用ではサーバー経由に変更してください。</p>
 
       <div class="api-field">
@@ -109,13 +109,31 @@
       <p class="field-note">保存時の文章整理・動画生成前の事実整理に使用</p>
 
       <div class="api-field">
+        <span>動画生成エンジン</span>
+        <div id="video-provider-options" class="provider-options" role="group" aria-label="動画生成エンジン">
+          <button type="button" data-provider="seedance" class="selected">Seedance 2.0 Mini</button>
+          <button type="button" data-provider="gemini">Gemini Omni</button>
+        </div>
+      </div>
+      <p class="field-note">Seedance 2.0 Miniは5秒・10秒生成に対応。Geminiを選べば従来の20秒・30秒生成も使えます。</p>
+
+      <div class="api-field">
+        <span>BytePlus / ModelArk API キー</span>
+        <div class="api-input-row">
+          <input id="byteplus-key" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ModelArk API key" />
+          <button id="byteplus-paste" class="paste-button" type="button">貼り付け</button>
+        </div>
+      </div>
+      <p class="field-note">Seedance 2.0 Miniの動画生成に使用</p>
+
+      <div class="api-field">
         <span>Gemini API キー</span>
         <div class="api-input-row">
           <input id="gemini-key" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza..." />
           <button id="gemini-paste" class="paste-button" type="button">貼り付け</button>
         </div>
       </div>
-      <p class="field-note">動画生成に使用</p>
+      <p class="field-note">Gemini Omniを選んだときだけ使用</p>
 
       <div class="settings-actions">
         <button id="settings-save" class="save-button" type="button">保存</button>
@@ -163,13 +181,13 @@
   <div id="video-modal" class="video-modal" aria-hidden="true">
     <button class="detail-backdrop" data-close-video aria-label="閉じる"></button>
     <article class="video-card">
-      <header class="detail-header"><div><strong>生成された動画</strong><span id="video-model-label">Gemini Omni Flash</span></div><button id="video-close" class="ghost-icon" type="button">×</button></header>
+      <header class="detail-header"><div><strong>生成された動画</strong><span id="video-model-label">Seedance 2.0 Mini</span></div><button id="video-close" class="ghost-icon" type="button">×</button></header>
       <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span id="video-loading-copy">人生の記憶を高速なカットと強い感情表現で構成しています。</span></div>
       <video id="video-player" controls playsinline loop hidden></video>
     </article>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./app.js?v=13"></script>
+  <script type="module" src="./app.js?v=14"></script>
 </body>
 </html>
