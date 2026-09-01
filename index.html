@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>Goblin Moment</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./styles.css?v=8" />
+  <link rel="stylesheet" href="./styles.css?v=9" />
 </head>
 <body>
   <main id="app" class="app">
@@ -98,10 +98,22 @@
       <header><strong>API設定</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
       <p class="api-note">この試作版ではAPIキーをこの端末のブラウザ内だけに保存します。公開運用ではサーバー経由に変更してください。</p>
 
-      <label class="api-field"><span>OpenAI API キー</span><input id="openai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-..." /></label>
+      <div class="api-field">
+        <span>OpenAI API キー</span>
+        <div class="api-input-row">
+          <input id="openai-key" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-..." />
+          <button id="openai-paste" class="paste-button" type="button">貼り付け</button>
+        </div>
+      </div>
       <p class="field-note">保存時の文章整理に使用</p>
 
-      <label class="api-field"><span>Gemini API キー</span><input id="gemini-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza..." /></label>
+      <div class="api-field">
+        <span>Gemini API キー</span>
+        <div class="api-input-row">
+          <input id="gemini-key" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza..." />
+          <button id="gemini-paste" class="paste-button" type="button">貼り付け</button>
+        </div>
+      </div>
       <p class="field-note">動画生成に使用</p>
 
       <div class="settings-actions">
@@ -157,6 +169,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./app.js?v=8"></script>
+  <script type="module" src="./app.js?v=9"></script>
 </body>
 </html>

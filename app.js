@@ -232,6 +232,20 @@ function openSettings() {
   els.settingsSheet.classList.add('open'); els.settingsSheet.setAttribute('aria-hidden', 'false');
 }
 function closeSettings() { els.settingsSheet.classList.remove('open'); els.settingsSheet.setAttribute('aria-hidden', 'true'); }
+
+async function pasteIntoApiField(input, label) {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) { toast('クリップボードが空です'); return; }
+    input.value = text.trim();
+    input.focus();
+    toast(`${label}を貼り付けました`);
+  } catch (error) {
+    console.error(error);
+    input.focus();
+    toast('自動貼り付けが使えません。入力欄を長押しして貼り付けてください');
+  }
+}
 async function saveSettings() {
   const openAIKey = els.openaiKey.value.trim();
   const geminiKey = els.geminiKey.value.trim();
@@ -639,7 +653,7 @@ function cacheElements() {
   const ids = [
     'app','pages','draft-indicator','settings-open','reset-draft','calendar-open','media-input','media-strip','media-empty','note','note-count','duration-label','duration-options','save','generate-video',
     'calendar-back','month-prev','month-next','month-title','today','calendar','selected-date-title','selected-date-count','record-list',
-    'settings-sheet','settings-close','openai-key','gemini-key','settings-save',
+    'settings-sheet','settings-close','openai-key','openai-paste','gemini-key','gemini-paste','settings-save',
     'detail-modal','detail-date','detail-time','detail-edit','detail-close','detail-media','detail-polished-tab','detail-raw-tab','detail-story','detail-duration-label','detail-duration-options','detail-generate-video','detail-view-video','detail-delete',
     'video-modal','video-close','video-loading','video-loading-copy','video-player','toast'
   ];
@@ -658,6 +672,8 @@ function bindEvents() {
   els.today.addEventListener('click', async () => { const now = new Date(); currentMonth = new Date(now.getFullYear(), now.getMonth(), 1); selectedDate = localDate(now); await renderCalendar(); await renderSelectedDate(); });
   els.settingsOpen.addEventListener('click', () => { pendingAction = null; openSettings(); });
   els.settingsClose.addEventListener('click', closeSettings); document.querySelector('[data-close-settings]').addEventListener('click', closeSettings); els.settingsSave.addEventListener('click', saveSettings);
+  els.openaiPaste.addEventListener('click', () => pasteIntoApiField(els.openaiKey, 'OpenAI APIキー'));
+  els.geminiPaste.addEventListener('click', () => pasteIntoApiField(els.geminiKey, 'Gemini APIキー'));
   els.detailClose.addEventListener('click', closeDetail); document.querySelector('[data-close-detail]').addEventListener('click', closeDetail);
   els.detailEdit.addEventListener('click', () => detailRecordId && beginEditRecord(detailRecordId));
   els.detailDelete.addEventListener('click', async () => { if (detailRecordId && confirm('この記録を削除しますか？')) await deleteRecord(detailRecordId); });
