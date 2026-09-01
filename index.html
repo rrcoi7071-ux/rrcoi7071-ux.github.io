@@ -4,50 +4,53 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
   <meta name="theme-color" content="#f3f2ee" />
-  <meta name="description" content="ゴブリンに感情をぶつけて、人生の一瞬を残す。" />
+  <meta name="description" content="残したい出来事を、写真・動画・文章から記録する。" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <title>Goblin Moment</title>
   <link rel="manifest" href="./manifest.webmanifest" />
-  <link rel="stylesheet" href="./styles.css?v=7" />
-  <script type="module" src="https://cdnjs.cloudflare.com/ajax/libs/model-viewer/4.3.1/model-viewer.min.js"></script>
+  <link rel="stylesheet" href="./styles.css?v=8" />
 </head>
 <body>
-  <div id="app" class="app" data-tone="neutral">
+  <main id="app" class="app">
     <div id="pages" class="pages">
       <section id="composer-page" class="page composer-page" aria-label="記録">
         <header class="topbar">
-          <span id="draft-indicator" class="draft-indicator">保存準備中</span>
+          <div>
+            <strong class="brand">Goblin Moment</strong>
+            <span id="draft-indicator" class="draft-indicator">下書き保存済み</span>
+          </div>
           <div class="topbar-actions">
+            <button id="settings-open" class="ghost-icon" type="button" aria-label="API設定">⚙</button>
             <button id="reset-draft" class="topbar-text-button" type="button">リセット</button>
             <button id="calendar-open" class="ghost-icon" type="button" aria-label="カレンダー">▦</button>
           </div>
         </header>
 
-        <section id="emotion-stage" class="emotion-stage" aria-label="感情を表現する空間">
-          <div id="goblins" class="goblins" data-count="1"></div>
-          <div id="reaction-menu" class="reaction-menu" hidden aria-label="スタンプを選ぶ"></div>
-          <p class="tap-guide">上半身タップ＝＋　下半身タップ＝−　長押し＝スタンプ</p>
-        </section>
-
         <section class="entry-area">
-          <div class="photo-block">
+          <div class="intro-copy">
+            <h1>残したい出来事を、そのまま。</h1>
+            <p>写真・動画と、覚えていることを書く。</p>
+          </div>
+
+          <div class="media-block card">
             <div class="entry-label-row">
               <strong>写真・動画</strong>
-              <label for="photo-input" class="text-button">追加</label>
+              <label for="media-input" class="text-button">追加</label>
             </div>
-            <input id="photo-input" type="file" accept="image/*,video/*" multiple hidden />
-            <div id="photo-strip" class="photo-strip">
-              <label id="photo-empty" for="photo-input" class="photo-empty">＋ 写真・動画を選ぶ</label>
+            <input id="media-input" type="file" accept="image/*,video/*" multiple hidden />
+            <div id="media-strip" class="media-strip">
+              <label id="media-empty" for="media-input" class="media-empty">＋ 写真・動画を選ぶ</label>
             </div>
           </div>
 
-          <div class="memo-block">
-            <div class="entry-label-row"><strong>メモ</strong><span id="memo-count">0</span></div>
-            <textarea id="memo" rows="4" maxlength="20000" placeholder="残したいことを書く"></textarea>
+          <div class="note-block card">
+            <div class="entry-label-row"><strong>出来事</strong><span id="note-count">0</span></div>
+            <textarea id="note" rows="9" maxlength="20000" placeholder="起きたこと、言われたこと、その時どう感じたか。思い出せるまま書く。"></textarea>
+            <p class="helper">保存すると、入力した内容をGPTが事実を変えずに読みやすい文章へ整理します。</p>
           </div>
 
-          <div class="duration-block">
+          <div class="duration-block card">
             <div class="entry-label-row"><strong>生成する動画の長さ</strong><span id="duration-label">10秒</span></div>
             <div id="duration-options" class="duration-options" role="group" aria-label="動画の長さ">
               <button type="button" data-duration="5">5秒</button>
@@ -81,23 +84,28 @@
 
         <section class="day-history">
           <div class="history-heading"><strong id="selected-date-title">日付を選択</strong><span id="selected-date-count"></span></div>
-          <div id="moment-list" class="moment-list"><p class="empty-message">記録した日を押すと、ここにその日の瞬間が出てきます。</p></div>
+          <div id="record-list" class="record-list"><p class="empty-message">記録した日を押すと、ここにその日の記録が出ます。</p></div>
         </section>
         <p class="swipe-guide calendar-swipe">右へスワイプすると記録画面</p>
       </section>
     </div>
-  </div>
+  </main>
 
-  <div id="api-sheet" class="sheet" aria-hidden="true">
-    <button class="sheet-backdrop" data-close-api aria-label="閉じる"></button>
-    <section class="sheet-card api-card" role="dialog" aria-modal="true" aria-label="Gemini API キー設定">
+  <div id="settings-sheet" class="sheet" aria-hidden="true">
+    <button class="sheet-backdrop" data-close-settings aria-label="閉じる"></button>
+    <section class="sheet-card settings-card" role="dialog" aria-modal="true" aria-label="API設定">
       <div class="sheet-handle"></div>
-      <header><strong>Gemini API キー</strong><button id="api-close" class="text-button" type="button">閉じる</button></header>
-      <p class="api-note">動画生成には Google Gemini API のキーが必要です。キーはこの端末のブラウザ内だけに保存し、GitHubには書き込みません。</p>
-      <input id="api-key" class="api-key-input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza..." />
-      <div class="api-actions">
-        <button id="api-paste" class="secondary-button" type="button">貼り付け</button>
-        <button id="api-save" class="save-button" type="button">保存して続ける</button>
+      <header><strong>API設定</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
+      <p class="api-note">この試作版ではAPIキーをこの端末のブラウザ内だけに保存します。公開運用ではサーバー経由に変更してください。</p>
+
+      <label class="api-field"><span>OpenAI API キー</span><input id="openai-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-..." /></label>
+      <p class="field-note">保存時の文章整理に使用</p>
+
+      <label class="api-field"><span>Gemini API キー</span><input id="gemini-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza..." /></label>
+      <p class="field-note">動画生成に使用</p>
+
+      <div class="settings-actions">
+        <button id="settings-save" class="save-button" type="button">保存</button>
       </div>
     </section>
   </div>
@@ -112,9 +120,14 @@
           <button id="detail-close" class="ghost-icon" type="button">×</button>
         </div>
       </header>
-      <div id="detail-photos" class="detail-photos"></div>
-      <p id="detail-note" class="detail-note"></p>
-      <div id="detail-stage" class="detail-stage"><div id="detail-goblins" class="detail-goblins"></div></div>
+
+      <div id="detail-media" class="detail-media"></div>
+
+      <div class="story-switch" role="tablist" aria-label="文章表示">
+        <button id="detail-polished-tab" type="button" class="selected">AIで整えた文章</button>
+        <button id="detail-raw-tab" type="button">元の入力</button>
+      </div>
+      <div id="detail-story" class="detail-story"></div>
 
       <div class="detail-duration-block">
         <div class="entry-label-row"><strong>生成する動画の長さ</strong><span id="detail-duration-label">10秒</span></div>
@@ -138,14 +151,12 @@
     <button class="detail-backdrop" data-close-video aria-label="閉じる"></button>
     <article class="video-card">
       <header class="detail-header"><div><strong>生成された動画</strong><span id="video-model-label">Gemini Omni Flash</span></div><button id="video-close" class="ghost-icon" type="button">×</button></header>
-      <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span id="video-loading-copy">入力した写真・動画・メモ・感情・スタンプをまとめています。</span></div>
+      <div id="video-loading" class="video-loading" hidden><div class="spinner"></div><strong>動画を生成中</strong><span id="video-loading-copy">記録の全体を高速なカットで構成しています。</span></div>
       <video id="video-player" controls playsinline loop hidden></video>
     </article>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <div id="model-warning" class="model-warning" hidden>3D表示を読み込めません。通信を確認して再読み込みしてください。</div>
-
-  <script type="module" src="./app.js?v=7"></script>
+  <script type="module" src="./app.js?v=8"></script>
 </body>
 </html>
