@@ -1,5 +1,5 @@
-const CACHE = 'goblin-moment-v14';
-const SHELL = ['./','./index.html','./styles.css?v=14','./app.js?v=14','./manifest.webmanifest'];
+const CACHE = 'goblin-moment-v15';
+const SHELL = ['./','./index.html','./styles.css?v=15','./app.js?v=15','./manifest.webmanifest'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

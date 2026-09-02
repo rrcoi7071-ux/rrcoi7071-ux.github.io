@@ -96,17 +96,17 @@
     <button class="sheet-backdrop" data-close-settings aria-label="閉じる"></button>
     <section class="sheet-card settings-card" role="dialog" aria-modal="true" aria-label="API設定">
       <div class="sheet-handle"></div>
-      <header><strong>API設定 · v14</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
-      <p class="api-note">この試作版ではAPIキーをこの端末のブラウザ内だけに保存します。公開運用ではサーバー経由に変更してください。</p>
+      <header><strong>AI設定 · v15</strong><button id="settings-close" class="text-button" type="button">閉じる</button></header>
+      <p class="api-note">OpenAIとBytePlusのAPIキーは中継サーバーに安全に保存します。</p>
 
       <div class="api-field">
-        <span>OpenAI API キー</span>
+        <span>中継サーバーURL</span>
         <div class="api-input-row">
-          <input id="openai-key" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="sk-..." />
-          <button id="openai-paste" class="paste-button" type="button">貼り付け</button>
+          <input id="api-base-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://your-project.vercel.app" />
+          <button id="api-base-paste" class="paste-button" type="button">貼り付け</button>
         </div>
       </div>
-      <p class="field-note">保存時の文章整理・動画生成前の事実整理に使用</p>
+      <p class="field-note">Vercel版では空欄で使えます。GitHub Pages版だけVercelのURLを入力します。</p>
 
       <div class="api-field">
         <span>動画生成エンジン</span>
@@ -116,15 +116,6 @@
         </div>
       </div>
       <p class="field-note">Seedance 2.0 Miniは5秒・10秒生成に対応。Geminiを選べば従来の20秒・30秒生成も使えます。</p>
-
-      <div class="api-field">
-        <span>BytePlus / ModelArk API キー</span>
-        <div class="api-input-row">
-          <input id="byteplus-key" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ModelArk API key" />
-          <button id="byteplus-paste" class="paste-button" type="button">貼り付け</button>
-        </div>
-      </div>
-      <p class="field-note">Seedance 2.0 Miniの動画生成に使用</p>
 
       <div class="api-field">
         <span>Gemini API キー</span>
@@ -188,6 +179,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script type="module" src="./app.js?v=14"></script>
+  <script type="module" src="./app.js?v=15"></script>
 </body>
 </html>

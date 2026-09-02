@@ -12,10 +12,9 @@ const SCHEMA_VERSION = 6;
 const OMNI_MODEL = 'gemini-omni-1.1-flash';
 const SEEDANCE_MODEL = 'dreamina-seedance-2-0-mini-260615';
 const OPENAI_MODEL = 'gpt-5.6-luna';
-const OPENAI_KEY_STORAGE = 'goblin-moment-openai-api-key';
 const GEMINI_KEY_STORAGE = 'goblin-moment-gemini-api-key';
-const BYTEPLUS_KEY_STORAGE = 'goblin-moment-byteplus-api-key';
 const VIDEO_PROVIDER_STORAGE = 'goblin-moment-video-provider';
+const API_BASE_STORAGE = 'goblin-moment-api-base-url';
 const MAX_MEDIA = 8;
 
 const els = {};
@@ -248,9 +247,10 @@ async function resetComposer(ask = true) {
   toast('リセットしました');
 }
 
-function getOpenAIKey() { return localStorage.getItem(OPENAI_KEY_STORAGE) || ''; }
 function getGeminiKey() { return localStorage.getItem(GEMINI_KEY_STORAGE) || ''; }
-function getBytePlusKey() { return localStorage.getItem(BYTEPLUS_KEY_STORAGE) || ''; }
+function getApiBase() { return (localStorage.getItem(API_BASE_STORAGE) || '').trim().replace(/\/$/, ''); }
+function apiUrl(path) { return `${getApiBase()}${path}`; }
+function backendConfigured() { return Boolean(getApiBase()) || !location.hostname.endsWith('github.io'); }
 function getVideoProvider() {
   const value = localStorage.getItem(VIDEO_PROVIDER_STORAGE);
   return value === 'gemini' ? 'gemini' : 'seedance';
@@ -274,8 +274,7 @@ function applyProviderDurationRules(provider = getVideoProvider()) {
 }
 function openSettings() {
   const provider = getVideoProvider();
-  els.openaiKey.value = getOpenAIKey();
-  els.byteplusKey.value = getBytePlusKey();
+  els.apiBaseUrl.value = getApiBase();
   els.geminiKey.value = getGeminiKey();
   setProviderButtons(provider);
   applyProviderDurationRules(provider);
@@ -292,12 +291,13 @@ async function pasteIntoApiField(input, label) {
   }
 }
 async function saveSettings() {
-  const openAIKey = els.openaiKey.value.trim();
-  const bytePlusKey = els.byteplusKey.value.trim();
+  const apiBaseUrl = els.apiBaseUrl.value.trim().replace(/\/$/, '');
   const geminiKey = els.geminiKey.value.trim();
   const provider = els.videoProviderOptions.querySelector('[data-provider].selected')?.dataset.provider || 'seedance';
-  if (openAIKey) localStorage.setItem(OPENAI_KEY_STORAGE, openAIKey); else localStorage.removeItem(OPENAI_KEY_STORAGE);
-  if (bytePlusKey) localStorage.setItem(BYTEPLUS_KEY_STORAGE, bytePlusKey); else localStorage.removeItem(BYTEPLUS_KEY_STORAGE);
+  if (apiBaseUrl && !/^https:\/\//i.test(apiBaseUrl)) { toast('中継サーバーURLはhttps://から入力してください'); return; }
+  if (apiBaseUrl) localStorage.setItem(API_BASE_STORAGE, apiBaseUrl); else localStorage.removeItem(API_BASE_STORAGE);
+  localStorage.removeItem('goblin-moment-openai-api-key');
+  localStorage.removeItem('goblin-moment-byteplus-api-key');
   if (geminiKey) localStorage.setItem(GEMINI_KEY_STORAGE, geminiKey); else localStorage.removeItem(GEMINI_KEY_STORAGE);
   localStorage.setItem(VIDEO_PROVIDER_STORAGE, provider);
   applyProviderDurationRules(provider);
@@ -317,10 +317,12 @@ function extractResponseText(payload) {
   return texts.join('\n').trim();
 }
 
-async function openAIText(developerText, userText, apiKey) {
-  const response = await fetch('https://api.openai.com/v1/responses', {
+async function openAIText(developerText, userText) {
+  let response;
+  try {
+    response = await fetch(apiUrl('/api/openai'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: OPENAI_MODEL,
       store: false,
@@ -329,7 +331,11 @@ async function openAIText(developerText, userText, apiKey) {
         { role: 'user', content: [{ type: 'input_text', text: userText }] }
       ]
     })
-  });
+    });
+  } catch (error) {
+    console.error('OpenAI proxy network error', error);
+    throw new Error('AI中継サーバーへ接続できません。設定のURLを確認してください');
+  }
   const raw = await response.text();
   let payload = {}; try { payload = raw ? JSON.parse(raw) : {}; } catch {}
   if (!response.ok) throw new Error(payload?.error?.message || `OpenAI API ${response.status}`);
@@ -357,7 +363,7 @@ function normalizeVideoPlan(plan) {
   if (!summary && !storyBeats.length) throw new Error('GPTが動画化できる事実を整理できませんでした');
   return { neutralSummary: summary, storyBeats, emotionalArc, uncertainties };
 }
-async function prepareVerifiedVideoPlan(record, apiKey, onStage = () => {}) {
+async function prepareVerifiedVideoPlan(record, onStage = () => {}) {
   const source = (record.rawNote ?? record.note ?? record.polishedNote ?? '').trim();
   if (!source) return { neutralSummary: '', storyBeats: [], emotionalArc: [], uncertainties: ['No written record. Use only supplied reference media as evidence.'] };
   const period = stagePrompt(record.lifeStage);
@@ -372,7 +378,7 @@ async function prepareVerifiedVideoPlan(record, apiKey, onStage = () => {}) {
     'Do not write a moral lesson, psychological diagnosis, or interpretation of what the memory means.',
     'Return JSON only with exactly these keys: neutralSummary (string), storyBeats (array of factual strings in chronological order), emotionalArc (array of objects with beat, emotion, intensity from 0 to 3, expressionGuidance), uncertainties (array of strings).'
   ].join('\n');
-  const firstText = await openAIText(plannerInstruction, `Life period: ${period}\nOriginal record:\n${source}`, apiKey);
+  const firstText = await openAIText(plannerInstruction, `Life period: ${period}\nOriginal record:\n${source}`);
   const firstPlan = normalizeVideoPlan(parseJsonObject(firstText));
 
   onStage('GPTが元の文章と照合しています…');
@@ -386,16 +392,15 @@ async function prepareVerifiedVideoPlan(record, apiKey, onStage = () => {}) {
     'Return JSON only with exactly these keys: neutralSummary, storyBeats, emotionalArc, uncertainties.'
   ].join('\n');
   const verificationInput = `ORIGINAL RECORD:\n${source}\n\nDRAFT PLAN:\n${JSON.stringify(firstPlan)}`;
-  const verifiedText = await openAIText(verifierInstruction, verificationInput, apiKey);
+  const verifiedText = await openAIText(verifierInstruction, verificationInput);
   return normalizeVideoPlan(parseJsonObject(verifiedText));
 }
-async function polishNote(rawNote, apiKey) {
+async function polishNote(rawNote) {
   const text = rawNote.trim();
   if (!text) return '';
   return openAIText(
     'あなたは個人の人生記録を整える編集者です。ユーザーの入力を、後から読み返して出来事の流れと当時の感情が思い出せる、自然で読みやすい一人称の日本語に整理してください。事実、人物関係、時系列、結果、本人が書いた感情を絶対に変えないでください。入力にない出来事・動機・感情・結論を追加しないでください。道徳的評価、助言、分析、見出し、箇条書きは不要です。重複、言い直し、音声入力由来の崩れだけを整理し、本人の温度感は残してください。本文だけを返してください。',
-    text,
-    apiKey
+    text
   );
 }
 
@@ -420,15 +425,15 @@ async function saveRecord() {
   if (!stageById(state.lifeStage)) { toast('幼稚園・小学校・中学校・高校・大学から時期を選んでください'); return; }
   if (!recordHasContent(state)) { toast('まず写真・動画か出来事を残してください'); return; }
   const rawNote = (state.rawNote || '').trim();
-  if (rawNote && !getOpenAIKey()) {
-    pendingAction = { type: 'save' }; openSettings(); toast('文章整理にOpenAI APIキーが必要です'); return;
+  if (rawNote && !backendConfigured()) {
+    pendingAction = { type: 'save' }; openSettings(); toast('文章整理に中継サーバーURLが必要です'); return;
   }
   els.save.disabled = true; els.save.textContent = '保存中…'; clearTimeout(draftTimer);
   try {
     let polishedNote = rawNote;
     if (rawNote) {
       els.draftIndicator.textContent = 'GPTが文章を整理中…';
-      try { polishedNote = await polishNote(rawNote, getOpenAIKey()); }
+      try { polishedNote = await polishNote(rawNote); }
       catch (error) { console.error(error); polishedNote = rawNote; toast('GPTの文章整理に失敗したため、元の文章で保存します', 4200); }
     }
     state.polishedNote = polishedNote;
@@ -659,11 +664,11 @@ async function blobToBase64(blob) {
 }
 async function compressImageForAI(blob) {
   try {
-    const bitmap = await createImageBitmap(blob), maxSide = 1100, scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+    const bitmap = await createImageBitmap(blob), maxSide = 768, scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
     const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
     const context = canvas.getContext('2d', { alpha: false }); context.drawImage(bitmap, 0, 0, width, height); bitmap.close();
-    return await new Promise(resolve => canvas.toBlob(result => resolve(result || blob), 'image/jpeg', .82));
+    return await new Promise(resolve => canvas.toBlob(result => resolve(result || blob), 'image/jpeg', .72));
   } catch { return blob; }
 }
 async function prepareOmniInput(record, prompt) {
@@ -803,12 +808,12 @@ async function extractVideoFrameForSeedance(blob) {
       });
     }
     const width = video.videoWidth || 720, height = video.videoHeight || 1280;
-    const maxSide = 1100, scale = Math.min(1, maxSide / Math.max(width, height));
+    const maxSide = 768, scale = Math.min(1, maxSide / Math.max(width, height));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
     const context = canvas.getContext('2d', { alpha: false });
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return await new Promise(resolve => canvas.toBlob(result => resolve(result), 'image/jpeg', .8));
+    return await new Promise(resolve => canvas.toBlob(result => resolve(result), 'image/jpeg', .72));
   } finally {
     video.removeAttribute('src'); video.load(); URL.revokeObjectURL(url);
   }
@@ -817,7 +822,7 @@ async function prepareSeedanceContent(record, prompt) {
   const content = [{ type: 'text', text: prompt }];
   let referenceCount = 0;
   for (const id of (record.mediaIds || []).slice(0, MAX_MEDIA)) {
-    if (referenceCount >= 9) break;
+    if (referenceCount >= 4) break;
     const media = await getMedia(id); if (!media?.blob) continue;
     try {
       let imageBlob = null;
@@ -840,7 +845,7 @@ async function seedanceFetch(url, options = {}, stage = '通信') {
   try { return await fetch(url, options); }
   catch (error) {
     console.error(`Seedance ${stage} network error`, error);
-    throw new Error(`Seedance通信失敗（${stage}）。ブラウザからBytePlusへ接続できない場合はサーバー中継が必要です。`);
+    throw new Error(`Seedance通信失敗（${stage}）。中継サーバーのURLと設定を確認してください。`);
   }
 }
 async function parseProviderResponse(response) {
@@ -851,14 +856,14 @@ async function parseProviderResponse(response) {
 function bytePlusError(payload, fallback) {
   return payload?.error?.message || payload?.error?.code || payload?.message || payload?.raw || fallback;
 }
-async function seedanceGenerateVideo(record, apiKey, duration, plan) {
+async function seedanceGenerateVideo(record, duration, plan) {
   duration = Math.max(4, Math.min(15, Number(duration) || 10));
   const prompt = await buildVideoPrompt(record, duration, duration, plan);
   const content = await prepareSeedanceContent(record, prompt);
-  const base = 'https://ark.ap-southeast.bytepluses.com/api/v3/contents/generations/tasks';
+  const base = apiUrl('/api/seedance');
   const response = await seedanceFetch(base, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: SEEDANCE_MODEL,
       content,
@@ -878,9 +883,7 @@ async function seedanceGenerateVideo(record, apiKey, duration, plan) {
   let completed = null;
   for (let i = 0; i < 180; i++) {
     if (i > 0) await sleep(3000);
-    const statusResponse = await seedanceFetch(`${base}/${encodeURIComponent(taskId)}`, {
-      method: 'GET', headers: { 'Authorization': `Bearer ${apiKey}` }
-    }, '動画処理確認');
+    const statusResponse = await seedanceFetch(`${base}?taskId=${encodeURIComponent(taskId)}`, { method: 'GET' }, '動画処理確認');
     const task = await parseProviderResponse(statusResponse);
     if (!statusResponse.ok) throw new Error(bytePlusError(task, `Seedance動画確認 ${statusResponse.status}`));
     const status = String(task?.status || '').toLowerCase();
@@ -889,9 +892,8 @@ async function seedanceGenerateVideo(record, apiKey, duration, plan) {
     els.videoLoadingCopy.textContent = status === 'queued' ? 'Seedance 2.0 Miniで生成待ちです…' : 'Seedance 2.0 Miniが動画を生成しています…';
   }
   if (!completed) throw new Error('Seedance動画生成がタイムアウトしました');
-  const videoUrl = completed?.content?.video_url;
-  if (!videoUrl) throw new Error('Seedanceから動画URLが返りませんでした');
-  const download = await seedanceFetch(videoUrl, { method: 'GET' }, '動画ダウンロード');
+  if (!completed?.video_ready) throw new Error('Seedanceから動画URLが返りませんでした');
+  const download = await seedanceFetch(`${base}?taskId=${encodeURIComponent(taskId)}&download=1`, { method: 'GET' }, '動画ダウンロード');
   if (!download.ok) throw new Error(`Seedance動画の取得に失敗しました (${download.status})`);
   const blob = await download.blob();
   if (!blob?.size) throw new Error('Seedance動画データが空でした');
@@ -919,11 +921,10 @@ async function viewStoredVideo(videoId) {
 async function startGeneration(job) {
   if (generationBusy) { toast('動画を生成中です'); return; }
   const provider = getVideoProvider();
-  const providerKey = provider === 'seedance' ? getBytePlusKey() : getGeminiKey();
-  if (!getOpenAIKey() || !providerKey) {
+  if (!backendConfigured() || (provider === 'gemini' && !getGeminiKey())) {
     pendingAction = { type: 'generate', job }; openSettings();
-    if (!getOpenAIKey()) toast('動画用の文章整理にOpenAI APIキーが必要です');
-    else toast(provider === 'seedance' ? 'Seedance生成にBytePlus APIキーが必要です' : '動画生成にGemini APIキーが必要です');
+    if (!backendConfigured()) toast('動画生成に中継サーバーURLが必要です');
+    else toast('動画生成にGemini APIキーが必要です');
     return;
   }
   let record;
@@ -935,11 +936,11 @@ async function startGeneration(job) {
   if (provider === 'seedance' && duration > 15) { toast('Seedance 2.0 Miniは最大15秒です。5秒か10秒を選んでください'); return; }
   generationBusy = true; els.generateVideo.disabled = true; els.detailGenerateVideo.disabled = true; openVideoLoading(duration, provider);
   try {
-    const plan = await prepareVerifiedVideoPlan(record, getOpenAIKey(), message => { els.videoLoadingCopy.textContent = message; });
+    const plan = await prepareVerifiedVideoPlan(record, message => { els.videoLoadingCopy.textContent = message; });
     let result, model;
     if (provider === 'seedance') {
       els.videoLoadingCopy.textContent = 'Seedance 2.0 Miniが事実確認済みの設計図から動画を生成しています…';
-      result = await seedanceGenerateVideo(record, getBytePlusKey(), duration, plan);
+      result = await seedanceGenerateVideo(record, duration, plan);
       model = SEEDANCE_MODEL;
     } else {
       els.videoLoadingCopy.textContent = 'Geminiが事実確認済みの設計図から動画を生成しています…';
@@ -986,7 +987,7 @@ function cacheElements() {
   const ids = [
     'app','pages','draft-indicator','settings-open','reset-draft','life-open','stage-label','stage-options','media-input','media-strip','media-empty','note','note-count','duration-label','duration-options','save','generate-video',
     'life-back','life-new','life-stage-nav','life-timeline',
-    'settings-sheet','settings-close','video-provider-options','openai-key','openai-paste','byteplus-key','byteplus-paste','gemini-key','gemini-paste','settings-save',
+    'settings-sheet','settings-close','video-provider-options','api-base-url','api-base-paste','gemini-key','gemini-paste','settings-save',
     'detail-modal','detail-stage','detail-time','detail-edit','detail-close','detail-media','detail-polished-tab','detail-raw-tab','detail-story','detail-duration-label','detail-duration-options','detail-generate-video','detail-view-video','detail-delete',
     'video-modal','video-close','video-model-label','video-loading','video-loading-copy','video-player','toast'
   ];
@@ -1007,8 +1008,7 @@ function bindEvents() {
     const button = event.target.closest('[data-provider]'); if (!button) return;
     setProviderButtons(button.dataset.provider); applyProviderDurationRules(button.dataset.provider);
   });
-  els.openaiPaste.addEventListener('click', () => pasteIntoApiField(els.openaiKey, 'OpenAI APIキー'));
-  els.byteplusPaste.addEventListener('click', () => pasteIntoApiField(els.byteplusKey, 'BytePlus APIキー'));
+  els.apiBasePaste.addEventListener('click', () => pasteIntoApiField(els.apiBaseUrl, '中継サーバーURL'));
   els.geminiPaste.addEventListener('click', () => pasteIntoApiField(els.geminiKey, 'Gemini APIキー'));
   els.detailClose.addEventListener('click', closeDetail); document.querySelector('[data-close-detail]').addEventListener('click', closeDetail);
   els.detailEdit.addEventListener('click', () => detailRecordId && beginEditRecord(detailRecordId));
@@ -1024,6 +1024,8 @@ function bindEvents() {
 
 async function init() {
   cacheElements(); bindEvents(); buildLifeNav();
+  localStorage.removeItem('goblin-moment-openai-api-key');
+  localStorage.removeItem('goblin-moment-byteplus-api-key');
   try {
     db = await openDB();
     const saved = await getDraft(); state = normalizeDraft(saved);
